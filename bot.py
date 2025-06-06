@@ -1,325 +1,252 @@
+# filepath: c:\Users\ПК\dostup_bot\app\bot_v2.py
 import asyncio
 import logging
-from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
-from dotenv import load_dotenv
 import os
+from pathlib import Path
 
-# Load environment variables
+from aiogram import Bot, Dispatcher, types
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from aiogram.dispatcher import FSMContext
+from aiogram.dispatcher.filters.state import State, StatesGroup
+from aiogram.types import (InlineKeyboardButton, InlineKeyboardMarkup,
+                           KeyboardButton, ReplyKeyboardMarkup)
+from dotenv import load_dotenv
+import openai
+
+# ───────────────────[ ENV & LOGGING ]───────────────────
 load_dotenv()
-
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Bot token and other variables
-BOT_TOKEN = os.getenv('BOT_TOKEN')
-PROVIDER_TOKEN = os.getenv('PROVIDER_TOKEN')
-COURSE_CHANNEL_ID = os.getenv('COURSE_CHANNEL_ID')
-YOUTUBE_CHANNEL_URL = os.getenv('YOUTUBE_CHANNEL_URL', 'https://youtube.com/@your-channel-name')
+# ───────────────────[ CONFIG ]───────────────────────────
+BOT_TOKEN           = os.getenv('BOT_TOKEN')
+PROVIDER_TOKEN      = os.getenv('PROVIDER_TOKEN')
+COURSE_CHANNEL_ID   = os.getenv('COURSE_CHANNEL_ID')
+YOUTUBE_CHANNEL_URL = os.getenv('YOUTUBE_CHANNEL_URL')
+CHANNEL_INVITE_LINK = os.getenv('CHANNEL_INVITE_LINK')
+OPENAI_API_KEY      = os.getenv('OPENAI_API_KEY')
+OPENAI_ASSISTANT_ID = os.getenv('OPENAI_ASSISTANT_ID')
 
-# Check if BOT_TOKEN is provided
+# Шлях до безкоштовного відео-уроку (локальний файл)
+LESSON_VIDEO_PATH = Path(r"C:\Users\ПК\dostup_bot\lessons\ЮТУБ урок 0.mp4")
+
+# Перевірка ключів
 if not BOT_TOKEN or BOT_TOKEN == 'YOUR_REAL_BOT_TOKEN_HERE':
-    logger.error("BOT_TOKEN is not set or using placeholder. Please get a real token from @BotFather")
-    exit(1)
+    logger.error("BOT_TOKEN не налаштовано!")
+    raise SystemExit(1)
 
-# Initialize bot and dispatcher
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(storage=MemoryStorage())
+# ───────────────────[ OpenAI ]───────────────────────────
+openai_client_ready = False
+if OPENAI_API_KEY and OPENAI_API_KEY != 'your_openai_api_key_here':
+    openai.api_key = OPENAI_API_KEY
+    openai_client_ready = True
+    logger.info("OpenAI API ініціалізовано")
+else:
+    logger.warning("OpenAI API-ключ не задано — функції Assistant вимкнені")
 
-# FSM States
-class ConsentStates(StatesGroup):
-    agb = State()
-    widerruf = State()
-    datenschutz = State()
-    payment_form = State()
-    ready = State()
+# ───────────────────[ Aiogram ]──────────────────────────
+bot     = Bot(BOT_TOKEN)
+storage = MemoryStorage()
+dp      = Dispatcher(bot, storage=storage)
 
-# Main menu keyboard
+# ───────────────────[ FSM ]──────────────────────────────
+class QuestionStates(StatesGroup):
+    waiting_for_question = State()
+
+# ───────────────────[ DATA ]─────────────────────────────
+COURSE_PRICES = {
+    "basic":   {"price": 299_000, "title": "Базовый курс",   "description": "Основы YouTube-бизнеса"},
+    "premium": {"price": 599_000, "title": "Премиум курс",  "description": "Полная программа с поддержкой"},
+    "vip":     {"price": 999_000, "title": "VIP курс",      "description": "Индивидуальное сопровождение"}
+}
+
+# ───────────────────[ KEYBOARDS ]────────────────────────
 main_menu = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="🎬 Получить бесплатный урок")],
-        [KeyboardButton(text="🎓 Пройти курс")]
+    [
+        [KeyboardButton("🎬 Получить бесплатный урок")],
+        [KeyboardButton("💳 Оплатить 149€")],
+        [KeyboardButton("❓ Задать вопрос")]
     ],
     resize_keyboard=True
 )
 
-# Payment keyboard
-payment_keyboard = InlineKeyboardMarkup(
-    inline_keyboard=[
-        [InlineKeyboardButton(text="💳 Оплатить 99€", callback_data="pay_course")]
-    ]
-)
-
-# Consent keyboard
-consent_keyboard = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="✅ Согласен")],
-        [KeyboardButton(text="❌ Не согласен")]
+buy_menu = ReplyKeyboardMarkup(
+    [
+        [KeyboardButton("💎 Базовый - 2990₽")],
+        [KeyboardButton("🚀 Премиум - 5990₽")],
+        [KeyboardButton("👑 VIP - 9990₽")],
+        [KeyboardButton("🔙 Головне меню")]
     ],
     resize_keyboard=True
 )
 
-# Test payment form keyboard
-test_payment_keyboard = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="Имя: Иван Иванов")],
-        [KeyboardButton(text="Email: test@example.com")],
-        [KeyboardButton(text="Телефон: +49123456789")],
-        [KeyboardButton(text="✅ Подтвердить тестовую оплату")]
-    ],
-    resize_keyboard=True
-)
-
-@dp.message(Command("start"))
-@dp.message(F.text.lower() == "старт")
-async def send_welcome(message: types.Message, state: FSMContext):
-    logger.info(f"User {message.from_user.id} started bot (/start)")
-    welcome_text = """👋 Добро пожаловать в бот курса «Успешный YouTube-бизнес с нуля»!
-
-Ты здесь не случайно — значит, хочешь создать YouTube-канал, который будет приносить доход. Мы поможем тебе это сделать.
-
-📚 Что тебя ждёт:
-✅ Пошаговая система от запуска до монетизации
-✅ Реальные примеры и инструменты, которые работают
-✅ Без воды — только практика
-
-⸻
-
-🎁 Начни прямо сейчас — получи бесплатный ознакомительный урок!
-👀 Узнаешь, какие каналы сегодня реально зарабатывают, с чего начать и как избежать частых ошибок.
-
-👉 Нажми «Посмотреть тестовый урок»"""
-    
-    await message.answer(welcome_text, reply_markup=main_menu)
-    await state.clear()
-
-@dp.message(F.text.lower() == "🎬 получить бесплатный урок")
-async def send_test_lesson(message: types.Message):
-    logger.info(f"User {message.from_user.id} requested test lesson")
-    try:        # Отправляем ссылку на YouTube канал вместо видео
-        youtube_message = f"""🎬 Вот твой бесплатный ознакомительный урок!
-
-📌 В этом уроке ты узнаешь:
-• Какие каналы реально зарабатывают
-• С чего начать новичку
-• Как избежать частых ошибок
-
-🎥 Смотри пробный урок на нашем YouTube канале:
-👉 {YOUTUBE_CHANNEL_URL}
-
-🔥 Переходи по ссылке и получай первые знания прямо сейчас!"""
-        
-        await message.answer(youtube_message)
-        
-        # Сообщение после отправки ссылки
-        after_link_text = """💬 Понравился пробный урок? Это только начало 😉
-
-📦 Полная программа включает:
-📌 Анализ ниш и выбор тематики
-📌 Создание контента без дорогой техники
-📌 Алгоритмы YouTube и продвижение
-📌 Способы заработка и монетизации
-📌 Реальные кейсы + поддержка в чате
-
-⸻
-
-🔥 Хочешь пройти весь путь вместе с нами и запустить свой канал?
-Тогда присоединяйся к полному курсу прямо сейчас 👇
-
-👉 Нажми «🎓 Пройти курс»"""
-        
-        await message.answer(after_link_text, reply_markup=main_menu)
-    except Exception as e:
-        logger.error(f"Error sending test lesson: {e}")
-        await message.answer("❌ Ошибка при отправке ссылки. Свяжитесь с поддержкой.")
-
-@dp.message(F.text.lower() == "🎓 пройти курс")
-async def start_consent(message: types.Message, state: FSMContext):
-    logger.info(f"User {message.from_user.id} started consent process")
-    course_info_text = """🎓 Курс «Успешный YouTube-бизнес с нуля»
-
-💰 Стоимость: 99€
-🕒 Доступ навсегда + закрытое сообщество
-📚 Полная программа + поддержка экспертов
-
-⸻
-
-Перед оплатой необходимо ознакомиться и подтвердить согласие с документами:
-
-📋 ДОКУМЕНТ 1: Allgemeine Geschäftsbedingungen (AGB)
-für den Online-Verkauf digitaler Inhalte (Online-Kurse)
-
-1. Geltungsbereich
-Diese Allgemeinen Geschäftsbedingungen (AGB) gelten für alle Verträge zwischen Firma Alexander Cherkasky Schlitzer Strasse 6, 60386 Frankfurt am Main (nachfolgend „Anbieter") und dem Kunden über den Erwerb und die Nutzung digitaler Inhalte, insbesondere Online-Kurse über die Plattform YouTube oder andere digitale Plattformen.
-
-2. Vertragsgegenstand
-Vertragsgegenstand ist der Zugang zu einem Online-Kurs, der aus vorab aufgezeichneten Videolektionen besteht. Der Zugang erfolgt digital und ausschließlich zur persönlichen Nutzung des Kunden.
-
-3. Vertragsabschluss
-Der Vertrag kommt zustande, sobald der Kunde den Bestellvorgang abgeschlossen und der Anbieter die Bestellung bestätigt hat.
-
-4. Preise und Zahlung
-Alle angegebenen Preise verstehen sich als Endpreise in Euro. Die Zahlung erfolgt über die im Bestellprozess angebotenen Zahlungsmethoden. Der Zugang zum Kurs wird nach erfolgreichem Zahlungseingang freigeschaltet.
-
-5. Widerrufsrecht
-Bei digitalen Inhalten besteht kein Widerrufsrecht, sobald die Ausführung begonnen hat und der Kunde ausdrücklich zugestimmt hat.
-
-6. Haftung
-Die Haftung des Anbieters ist auf Vorsatz und grobe Fahrlässigkeit beschränkt.
-
-7. Anwendbares Recht
-Es gilt deutsches Recht."""
-    await message.answer(course_info_text, reply_markup=consent_keyboard)
-    await state.set_state(ConsentStates.agb)
-
-@dp.message(ConsentStates.agb)
-async def handle_agb_consent(message: types.Message, state: FSMContext):
-    if message.text == "✅ Согласен":
-        logger.info(f"User {message.from_user.id} agreed to AGB")
-        doc_text = """📋 ДОКУМЕНТ 2: Widerrufsverzicht
-
-Ich stimme ausdrücklich zu, dass der Anbieter mit der Ausführung des Vertrages vor Ablauf der Widerrufsfrist beginnt.
-
-Mir ist bekannt, dass ich bei vollständiger Vertragserfüllung durch den Anbieter mein Widerrufsrecht verliere, wenn der Vertrag auf meinen ausdrücklichen Wunsch erfüllt wurde, bevor die Widerrufsfrist abgelaufen ist.
-
-Bei digitalen Inhalten, deren Bereitstellung nicht auf einem körperlichen Datenträger erfolgt, verliere ich mein Widerrufsrecht, sobald der Anbieter mit der Ausführung begonnen hat, nachdem ich ausdrücklich zugestimmt habe und bestätigt habe, dass ich mein Widerrufsrecht bei Beginn der Ausführung verliere.
-
-Ich bestätige hiermit meinen ausdrücklichen Verzicht auf das Widerrufsrecht."""
-        await message.answer(doc_text, reply_markup=consent_keyboard)
-        await state.set_state(ConsentStates.widerruf)
-    else:
-        await message.answer("Для продолжения необходимо согласие с условиями.", reply_markup=main_menu)
-        await state.clear()
-
-@dp.message(ConsentStates.widerruf)
-async def handle_widerruf_consent(message: types.Message, state: FSMContext):
-    if message.text == "✅ Согласен":
-        logger.info(f"User {message.from_user.id} agreed to Widerrufsverzicht")
-        doc_text = """📋 ДОКУМЕНТ 3: Datenschutzerklärung
-
-1. Datenerhebung und -verarbeitung
-Wir erheben und verarbeiten personenbezogene Daten nur im Rahmen der gesetzlichen Bestimmungen der DSGVO.
-
-2. Zweck der Datenverarbeitung
-Ihre Daten werden ausschließlich zur Abwicklung des Kaufvertrages und zur Bereitstellung des erworbenen Online-Kurses verwendet.
-
-3. Datenweitergabe
-Eine Weitergabe Ihrer Daten an Dritte erfolgt nur, soweit dies zur Vertragsabwicklung erforderlich ist (z.B. Zahlungsabwicklung).
-
-4. Ihre Rechte
-Sie haben das Recht auf Auskunft, Berichtigung, Löschung und Einschränkung der Verarbeitung Ihrer Daten.
-
-5. Kontakt
-Für Fragen zum Datenschutz kontaktieren Sie uns unter: [Kontaktdaten]
-
-Mit der Zustimmung erklären Sie sich mit der Verarbeitung Ihrer Daten gemäß dieser Datenschutzerklärung einverstanden."""
-        await message.answer(doc_text, reply_markup=consent_keyboard)
-        await state.set_state(ConsentStates.datenschutz)
-    else:
-        await message.answer("Для продолжения необходимо согласие с условиями.", reply_markup=main_menu)
-        await state.clear()
-
-@dp.message(ConsentStates.datenschutz)
-async def handle_datenschutz_consent(message: types.Message, state: FSMContext):
-    if message.text == "✅ Согласен":
-        logger.info(f"User {message.from_user.id} completed all consents")
-        await message.answer(
-            "🎉 Отлично! Все согласия получены.\n\n"
-            "💳 ТЕСТОВАЯ ОПЛАТА\n"
-            "💰 Курс «YouTube-бизнес с нуля»: 99€\n\n"
-            "📝 Заполните тестовые данные для оплаты:",
-            reply_markup=test_payment_keyboard
-        )
-        await state.set_state(ConsentStates.payment_form)
-    else:
-        await message.answer("Для продолжения необходимо согласие с условиями.", reply_markup=main_menu)
-        await state.clear()
-
-@dp.message(ConsentStates.payment_form)
-async def handle_test_payment(message: types.Message, state: FSMContext):
-    if message.text == "✅ Подтвердить тестовую оплату":
-        logger.info(f"User {message.from_user.id} completed test payment")
-          # Create invite link for the channel
-        try:
-            invite_link = await bot.create_chat_invite_link(
-                chat_id=COURSE_CHANNEL_ID,
-                expire_date=None,
-                member_limit=1
-            )
-            
-            await message.answer(
-                f"🎉 ТЕСТОВАЯ ОПЛАТА ПРОШЛА УСПЕШНО!\n\n"
-                f"💰 Сумма: 99.00 EUR\n"
-                f"🎓 Курс: «YouTube-бизнес с нуля»\n"
-                f"🔗 Ваша ссылка для доступа к курсу: {invite_link.invite_link}\n\n"
-                f"✅ Добро пожаловать в закрытое сообщество!\n"
-                f"📚 Начинайте обучение и создавайте свой успешный канал!\n\n"
-                f"⚠️ Это тестовая оплата - в реальной версии здесь будет настоящий платеж.",
-                reply_markup=main_menu
-            )
-            await state.clear()
-        except Exception as e:
-            logger.error(f"Error creating invite link: {e}")
-            await message.answer(
-                f"🎉 ТЕСТОВАЯ ОПЛАТА ПРОШЛА УСПЕШНО!\n\n"
-                f"💰 Сумма: 99.00 EUR\n"
-                f"❗ Произошла ошибка при создании ссылки. Свяжитесь с поддержкой.\n"
-                f"📚 Это тестовая оплата - в реальной версии здесь будет настоящий платеж.",
-                reply_markup=main_menu
-            )
-            await state.clear()
-    else:
-        # User is filling in payment form data
-        await message.answer("Заполните все поля и нажмите 'Подтвердить тестовую оплату'", reply_markup=test_payment_keyboard)
-
-@dp.pre_checkout_query()
-async def process_pre_checkout_query(pre_checkout_query: types.PreCheckoutQuery):
-    logger.info(f"Pre-checkout query from user {pre_checkout_query.from_user.id}")
-    await bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
-
-@dp.message(F.content_type == types.ContentType.SUCCESSFUL_PAYMENT)
-async def process_successful_payment(message: types.Message):
-    logger.info(f"Successful payment from user {message.from_user.id}")
-    payment_info = message.successful_payment
-    
-    # Create invite link for the channel
+# ───────────────────[ OpenAI helper ]────────────────────
+# Для работы с OpenAI Assistant API требуется openai>=1.3.0
+# В requirements.txt должно быть: openai>=1.3.0
+# В .env должен быть OPENAI_ASSISTANT_ID=asst_...
+# Ответ ассистента приходит через OpenAI Assistants API
+async def ask_assistant(question: str) -> str:
+    if not openai_client_ready:
+        return "❌ OpenAI Assistant недоступен."
     try:
-        invite_link = await bot.create_chat_invite_link(
-            chat_id=COURSE_CHANNEL_ID,
-            expire_date=None,
-            member_limit=1
+        # Используем OpenAI Assistants API (asst_...)
+        thread = openai.beta.threads.create()
+        openai.beta.threads.messages.create(
+            thread_id=thread.id,
+            role="user",
+            content=question
         )
-        
-        await message.answer(
-            f"🎉 Оплата прошла успешно!\n\n"
-            f"💰 Сумма: {payment_info.total_amount // 100} {payment_info.currency}\n"
-            f"🔗 Ваша ссылка для доступа к курсу: {invite_link.invite_link}\n\n"
-            f"Добро пожаловать в закрытый курс!",
-            reply_markup=main_menu
+        run = openai.beta.threads.runs.create(
+            thread_id=thread.id,
+            assistant_id=OPENAI_ASSISTANT_ID
+        )
+        # Ждем завершения run
+        import time
+        while True:
+            run_status = openai.beta.threads.runs.retrieve(thread_id=thread.id, run_id=run.id)
+            if run_status.status == "completed":
+                break
+            elif run_status.status in ("failed", "cancelled", "expired"):
+                return "❌ Ошибка OpenAI Assistant. Попробуйте позже."
+            time.sleep(1)
+        messages = openai.beta.threads.messages.list(thread_id=thread.id)
+        # Берем последний ответ ассистента
+        for msg in reversed(messages.data):
+            if msg.role == "assistant":
+                return msg.content[0].text.value
+        return "❌ Нет ответа от ассистента."
+    except Exception as e:
+        logger.error(f"OpenAI Assistant error: {e}")
+        return "❌ Ошибка OpenAI Assistant, попробуйте позже."
+
+# ───────────────────[ HANDLERS ]─────────────────────────
+@dp.message_handler(commands=["start"])
+@dp.message_handler(lambda m: m.text.lower() == "старт")
+async def cmd_start(message: types.Message, state: FSMContext):
+    text = (
+        "👋 Добро пожаловать в бот курса 'Успешный YouTube-бизнес с нуля'!\n\n"
+        "🎬 Получи бесплатный ознакомительный урок — просто нажми соответствующую кнопку.\n\n"
+        "💳 Чтобы получить доступ ко всем материалам и закрытому Telegram-сообществу, оплати участие (149€) — и сразу получишь ссылку для входа.\n\n"
+        "❓ В любое время можешь задать вопрос по YouTube — тебе поможет AI-ассистент!\n\n"
+        "Удачи и больших доходов на YouTube!"
+    )
+    await message.answer(text, reply_markup=main_menu)
+    await state.finish()
+
+# ─────────[ Безкоштовний урок ]──────────────────────────
+@dp.message_handler(lambda m: m.text.lower() == "🎬 получить бесплатный урок")
+async def send_free_lesson(message: types.Message):
+    await message.answer(
+        f"🎬 Вот твой бесплатный ознакомительный урок!\n\nСмотри на YouTube: {YOUTUBE_CHANNEL_URL}",
+        reply_markup=main_menu
+    )
+
+# ─────────[ Інформація про курс ]────────────────────────
+@dp.message_handler(lambda m: m.text.lower() == "ℹ️ о курсе")
+async def course_info(message: types.Message):
+    text = (
+        "📚 Курс «Успешный YouTube-бизнес с нуля»\n\n"
+        "✔️ Пошаговый запуск канала\n"
+        "✔️ Стратегии монетизации\n"
+        "✔️ Поддержка экспертов\n\n"
+        "💰 Чтобы получить доступ, воспользуйся кнопкой оплаты."
+    )
+    await message.answer(text, reply_markup=main_menu, parse_mode="Markdown")
+
+# ─────────[ Меню покупки ]───────────────────────────────
+@dp.message_handler(lambda m: m.text.lower() == "💳 оплатить 149€")
+async def fake_payment(message: types.Message):
+    # Используем ссылку из .env или дефолтную
+    invite_link = CHANNEL_INVITE_LINK if CHANNEL_INVITE_LINK else "https://t.me/+xazMLl_YLUllMzUy"
+    await message.answer(
+        f"✅ Оплата прошла успешно!\n\nВаша ссылка для доступа в закрытый канал: {invite_link}",
+        reply_markup=main_menu
+    )
+
+# ─────────[ Створення інвойсу ]──────────────────────────
+@dp.message_handler(lambda m: m.text in ["💎 Базовый - 2990₽", "🚀 Премиум - 5990₽", "👑 VIP - 9990₽"])
+async def create_invoice(message: types.Message):
+    tariff_key = ("basic"   if "Базовый" in message.text else
+                  "premium" if "Премиум" in message.text else
+                  "vip")
+    price_cfg = COURSE_PRICES[tariff_key]
+
+    prices = [types.LabeledPrice(label=price_cfg["title"], amount=price_cfg["price"])]
+    try:
+        await bot.send_invoice(
+            chat_id=message.chat.id,
+            title=price_cfg["title"],
+            description=price_cfg["description"],
+            payload=f"course_{tariff_key}",
+            provider_token=PROVIDER_TOKEN,
+            currency="RUB",
+            prices=prices,
+            start_parameter="yt-course"
         )
     except Exception as e:
-        logger.error(f"Error creating invite link: {e}")
-        await message.answer(
-            f"🎉 Оплата прошла успешно!\n\n"
-            f"💰 Сумма: {payment_info.total_amount // 100} {payment_info.currency}\n"
-            f"❗ Произошла ошибка при создании ссылки. Свяжитесь с поддержкой.",
-            reply_markup=main_menu
-        )
+        logger.error(f"Invoice error: {e}")
+        await message.answer("❌ Не вдалося створити рахунок.", reply_markup=main_menu)
 
-# Fallback handler for unknown messages
-@dp.message()
-async def handle_unknown(message: types.Message):
-    logger.info(f"Unknown message from user {message.from_user.id}: {message.text}")
-    await message.answer("Используйте кнопки меню:", reply_markup=main_menu)
+# ─────────[ FSM: питання ]────────────────────────────────
+@dp.message_handler(lambda m: m.text.lower() == "❓ задать вопрос")
+async def ask_question(message: types.Message, state: FSMContext):
+    if not openai_client_ready:
+        await message.answer("❌ Вопросы временно недоступны.", reply_markup=main_menu)
+        return
+    await QuestionStates.waiting_for_question.set()
+    await message.answer(
+        "Введите ваш вопрос по YouTube-каналам.\n\nДля отмены нажмите «🔙 Отмена».",
+        reply_markup=ReplyKeyboardMarkup([[KeyboardButton("🔙 Отмена")]], resize_keyboard=True)
+    )
 
+@dp.message_handler(state=QuestionStates.waiting_for_question)
+async def handle_question(message: types.Message, state: FSMContext):
+    if message.text.lower() == "🔙 отмена":
+        await state.finish()
+        await message.answer("❌ Отменено.", reply_markup=main_menu)
+        return
+    await message.answer("🤔 Думаю...")
+    reply = await ask_assistant(message.text)
+    await message.answer(f"💡 {reply}", reply_markup=main_menu)
+    await state.finish()
+
+# ─────────[ Оплата ]─────────────────────────────────────
+@dp.pre_checkout_query_handler()
+async def pre_checkout(pre_checkout_q: types.PreCheckoutQuery):
+    await bot.answer_pre_checkout_query(pre_checkout_q.id, ok=True)
+
+@dp.message_handler(content_types=types.ContentType.SUCCESSFUL_PAYMENT)
+async def successful_payment(message: types.Message):
+    tariff = message.successful_payment.invoice_payload.replace("course_", "")
+    await message.answer(
+        f"✅ Дякуємо за оплату тарифу **{COURSE_PRICES[tariff]['title']}**!\n"
+        "Доступи буде надіслано протягом 24 годин.",
+        parse_mode="Markdown",
+        reply_markup=main_menu
+    )
+
+# ─────────[ FALLBACK: чат ]──────────────────────────────
+@dp.message_handler(content_types=types.ContentType.TEXT)
+async def ai_fallback(message: types.Message, state: FSMContext):
+    if await state.get_state() is not None:
+        return
+    menu_cmds = {"🎬 получить бесплатный урок", "💳 оплатить 149€", "ℹ️ о курсе", "❓ задать вопрос", "/start", "старт"}
+    if message.text.lower() in menu_cmds:
+        return
+    if not openai_client_ready:
+        await message.answer("👋 Выберите действие из меню:", reply_markup=main_menu)
+        return
+    await message.answer("🤔 Думаю...")
+    rsp = await ask_assistant(message.text)
+    await message.answer(f"💡 {rsp}", reply_markup=main_menu)
+
+# ───────────────────[ MAIN ]─────────────────────────────
 async def main():
-    logger.info("Bot is starting...")
-    await dp.start_polling(bot, skip_updates=True)
+    logger.info("Bot starting…")
+    try:
+        await dp.start_polling()
+    finally:
+        await bot.session.close()
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     asyncio.run(main())
