@@ -22,7 +22,7 @@ logging.basicConfig(
     level=logging.DEBUG,  # Используем DEBUG уровень для максимальной детализации
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler("/app/bot_debug.log", encoding='utf-8'),
+        logging.FileHandler("c:\\Users\\ПК\\dostup_bot\\bot_debug.log", encoding='utf-8'),
         logging.StreamHandler(sys.stdout)
     ]
 )
