@@ -124,45 +124,58 @@ Der Vertrag kommt zustande, sobald der Kunde den Bestellvorgang abgeschlossen un
 4. Preise und Zahlung
 Alle angegebenen Preise verstehen sich als Endpreise in Euro. Die Zahlung erfolgt über die im Bestellprozess angebotenen Zahlungsmethoden. Der Zugang zum Kurs wird nach erfolgreichem Zahlungseingang freigeschaltet.
 
-5. Widerrufsrecht
-Bei digitalen Inhalten besteht kein Widerrufsrecht, sobald die Ausführung begonnen hat und der Kunde ausdrücklich zugestimmt hat.
+5. Nutzungsrechte
+Mit der Buchung erhält der Kunde ein einfaches, nicht übertragbares Nutzungsrecht zur privaten Nutzung der Inhalte. Eine Weitergabe, Vervielfältigung oder öffentliche Wiedergabe ist untersagt.
 
-6. Haftung
-Die Haftung des Anbieters ist auf Vorsatz und grobe Fahrlässigkeit beschränkt.
+6. Haftungsausschluss
+Die Inhalte wurden mit größter Sorgfalt erstellt. Für die Richtigkeit, Vollständigkeit und Aktualität wird jedoch keine Haftung übernommen. Die Nutzung der Inhalte erfolgt auf eigene Verantwortung.
 
-7. Anwendbares Recht
-Es gilt deutsches Recht.
+7. Widerruf und Verzicht
+Da es sich um digitale Inhalte handelt, die sofort nach Kauf bereitgestellt werden, besteht kein Widerrufsrecht, wenn der Kunde ausdrücklich zustimmt und bestätigt, dass er mit der Ausführung des Vertrags vor Ablauf der Widerrufsfrist beginnt.
 """,
 
     "widerruf": """📋 ДОКУМЕНТ 2: Widerrufsverzicht
 
-Ich stimme ausdrücklich zu, dass der Anbieter mit der Ausführung des Vertrages vor Ablauf der Widerrufsfrist beginnt.
+Widerrufsverzicht – Zustimmung zur vorzeitigen Vertragserfüllung
+Verzicht auf Widerrufsrecht gemäß § 356 Abs. 5 BGB
+Ich stimme ausdrücklich zu, dass Alexander Cherkasky Schlitzer Strasse 6, 60386 Frankfurt am Main vor Ablauf der Widerrufsfrist mit der Ausführung des Vertrages beginnt. Ich nehme zur Kenntnis, dass ich mit Beginn der Ausführung des Vertrages mein Widerrufsrecht verliere.
+Ich stimme dem Verzicht auf das Widerrufsrecht ausdrücklich zu.
 
-Mir ist bekannt, dass ich bei vollständiger Vertragserfüllung durch den Anbieter mein Widerrufsrecht verliere, wenn der Vertrag auf meinen ausdrücklichen Wunsch erfüllt wurde, bevor die Widerrufsfrist abgelaufen ist.
-
-Bei digitalen Inhalten, deren Bereitstellung nicht auf einem körperlichen Datenträger erfolgt, verliere ich mein Widerrufsrecht, sobald der Anbieter mit der Ausführung begonnen hat, nachdem ich ausdrücklich zugestimmt habe und bestätigt habe, dass ich mein Widerrufsrecht bei Beginn der Ausführung verliere.
-
-Ich bestätige hiermit meinen ausdrücklichen Verzicht auf das Widerrufsrecht.
+Отказ от права на отзыв – Согласие на досрочное выполнение договора
+Отказ от права на отзыв в соответствии с § 356, абз. 5 Гражданского кодекса Германии (BGB)
+Я даю явное согласие на то, что Alexander Cherkasky Schlitzer Strasse 6, 60386 Frankfurt am Main начнёт выполнение договора до истечения срока отзыва. Я принимаю к сведению, что с началом исполнения договора я теряю своё право на отзыв.
+Я явно соглашаюсь на отказ от права на отзыв.
 """,
 
     "datenschutz": """📋 ДОКУМЕНТ 3: Datenschutzerklärung
 
-1. Datenerhebung und -verarbeitung
-Wir erheben und verarbeiten personenbezogene Daten nur im Rahmen der gesetzlichen Bestimmungen der DSGVO.
+1. Verantwortlicher
+Verantwortlich für die Datenverarbeitung ist:
+Firma Alexander Cherkasky 
+Schlitzer Strasse 6, 60386 Frankfurt am Main
+[+4917624160386 / E-Mail-Adresse a.cherkasky@rusverlag.de]
 
-2. Zweck der Datenverarbeitung
-Ihre Daten werden ausschließlich zur Abwicklung des Kaufvertrages und zur Bereitstellung des erworbenen Online-Kurses verwendet.
+2. Erhebung und Speicherung personenbezogener Daten
+Wir erheben personenbezogene Daten (z. B. Name, E-Mail-Adresse, Zahlungsdaten), die zur Vertragsabwicklung und Kundenbetreuung erforderlich sind.
 
-3. Datenweitergabe
-Eine Weitergabe Ihrer Daten an Dritte erfolgt nur, soweit dies zur Vertragsabwicklung erforderlich ist (z.B. Zahlungsabwicklung).
+3. Zweck der Datenverarbeitung
+Die Daten werden ausschließlich zur Vertragserfüllung, Kundenkommunikation, Zahlungsabwicklung und Bereitstellung der Online-Kurse verarbeitet.
 
-4. Ihre Rechte
-Sie haben das Recht auf Auskunft, Berichtigung, Löschung und Einschränkung der Verarbeitung Ihrer Daten.
+4. Weitergabe an Dritte
+Eine Weitergabe an Dritte erfolgt nur, soweit dies zur Vertragserfüllung notwendig ist (z. B. Zahlungsdienstleister).
 
-5. Kontakt
-Für Fragen zum Datenschutz kontaktieren Sie uns unter: [Kontaktdaten]
+5. Speicherdauer
+Personenbezogene Daten werden nur so lange gespeichert, wie es für die genannten Zwecke erforderlich ist oder gesetzliche Aufbewahrungsfristen bestehen.
 
-Mit der Zustimmung erklären Sie sich mit der Verarbeitung Ihrer Daten gemäß dieser Datenschutzerklärung einverstanden.
+6. Ihre Rechte
+Sie haben jederzeit das Recht auf Auskunft, Berichtigung, Löschung, Einschränkung der Verarbeitung sowie Widerspruch und Datenübertragbarkeit. Bitte wenden Sie sich dazu an [Kontaktadresse].
+
+7. Sicherheit
+Wir setzen technische und organisatorische Sicherheitsmaßnahmen ein, um Ihre Daten vor Verlust oder unbefugtem Zugriff zu schützen.
+
+8. Kontakt Datenschutzbeauftragter
+Bei Fragen zum Datenschutz wenden Sie sich bitte an:
+Firma Alexander Cherkasky a.cherkasky@rusverlag.de
 """
 }
 
