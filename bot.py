@@ -15,14 +15,27 @@ from dotenv import load_dotenv
 import openai
 # Для проверки платежей через API нам нужен модуль stripe
 import stripe
+# Импортируем модуль системы напоминаний
+from reminder_system import ReminderSystem
 
 # ───────────────────[ НАСТРОЙКА РАСШИРЕННОГО ЛОГИРОВАНИЯ ]───────────────────
+# Определяем путь для логов, совместимый с Docker и локальным запуском
+if os.path.exists("/app"):
+    # Запуск в Docker
+    log_path = "/app/bot_debug.log"
+else:
+    # Локальный запуск
+    log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot_debug.log")
+
+# Создаем директорию для логов, если ее нет
+os.makedirs(os.path.dirname(log_path), exist_ok=True)
+
 # Настраиваем расширенное логирование
 logging.basicConfig(
     level=logging.DEBUG,  # Используем DEBUG уровень для максимальной детализации
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler("/app/bot_debug.log", encoding='utf-8'),
+        logging.FileHandler(log_path, encoding='utf-8'),
         logging.StreamHandler(sys.stdout)
     ]
 )
@@ -75,6 +88,32 @@ else:
 bot     = Bot(BOT_TOKEN)
 storage = MemoryStorage()
 dp      = Dispatcher(bot, storage=storage)
+
+# ───────────────────[ Reminder System ]───────────────────
+# Определяем путь для базы данных напоминаний, совместимый с Docker и локальным запуском
+if os.path.exists("/app"):
+    # Запуск в Docker
+    reminder_db_path = "/app/reminder_data.db"
+else:
+    # Локальный запуск
+    reminder_db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reminder_data.db")
+
+# Инициализируем систему напоминаний
+reminder_system = None
+if openai_client_ready:
+    reminder_system = ReminderSystem(
+        bot=bot, 
+        db_path=reminder_db_path,
+        openai_client=openai,
+        openai_assistant_id=OPENAI_ASSISTANT_ID
+    )
+    logger.info(f"Система напоминаний инициализирована с поддержкой OpenAI (БД: {reminder_db_path})")
+else:
+    reminder_system = ReminderSystem(
+        bot=bot,
+        db_path=reminder_db_path
+    )
+    logger.info(f"Система напоминаний инициализирована без поддержки OpenAI (БД: {reminder_db_path})")
 
 # ───────────────────[ FSM ]──────────────────────────────
 class QuestionStates(StatesGroup):
@@ -371,6 +410,12 @@ async def send_course_access(user_id: int):
     """Выдаёт доступ пользователю к курсу"""
     try:
         logger.info(f"Попытка выдать доступ пользователю {user_id}")
+        
+        # Обновляем статус в системе напоминаний
+        if reminder_system:
+            await reminder_system.mark_user_purchased(user_id)
+            logger.info(f"Пользователь {user_id} отмечен как оплативший в системе напоминаний")
+        
         # Пробуем добавить пользователя в закрытый канал
         if COURSE_CHANNEL_ID:
             try:
@@ -435,11 +480,25 @@ async def cmd_start(message: types.Message, state: FSMContext):
 # ─────────[ Безкоштовний урок ]──────────────────────────
 @dp.message_handler(lambda m: m.text.lower() == "🎬 получить бесплатный урок")
 async def send_free_lesson(message: types.Message):
-    logger.debug(f"Запрос бесплатного урока от {message.from_user.id}")
+    user = message.from_user
+    user_id = user.id
+    logger.debug(f"Запрос бесплатного урока от {user_id}")
+    
+    # Отправляем урок
     await message.answer(
         f"🎬 Вот твой бесплатный ознакомительный урок!\n\nСмотри на YouTube: {YOUTUBE_CHANNEL_URL}",
         reply_markup=main_menu
     )
+    
+    # Записываем просмотр для системы напоминаний
+    if reminder_system:
+        await reminder_system.track_lesson_view(
+            user_id=user_id,
+            username=user.username,
+            first_name=user.first_name,
+            last_name=user.last_name
+        )
+        logger.debug(f"Просмотр урока записан в систему напоминаний для пользователя {user_id}")
 
 # ─────────[ Меню покупки ]───────────────────────────────
 @dp.message_handler(lambda m: m.text.lower() == "💳 оплатить 149€")
@@ -926,10 +985,51 @@ async def grant_access(message: types.Message):
         logger.error(f"Ошибка при выдаче доступа: {e}")
         await message.answer(f"❌ Ошибка: {e}")
 
+# Команда для проверки статистики напоминаний (для администратора)
+@dp.message_handler(commands=["reminders"])
+@dp.message_handler(lambda m: m.text.lower().startswith("статистика напоминаний") and m.from_user.id == ADMIN_USER_ID)
+async def check_reminder_stats(message: types.Message):
+    logger.info(f"Администратор запросил статистику напоминаний")
+    
+    if not reminder_system:
+        await message.answer("❌ Система напоминаний не инициализирована.")
+        return
+    
+    try:
+        # Получаем статистику из модуля напоминаний
+        from reminder_system import get_reminder_stats
+        stats = await get_reminder_stats(reminder_system.db_path)
+        
+        # Формируем сообщение
+        stats_message = (
+            "📊 Статистика системы напоминаний:\n\n"
+            f"👥 Всего пользователей: {stats['total_users']}\n"
+            f"📨 Отправлено напоминаний: {stats['reminders_sent']}\n"
+            f"👤 Пользователей с напоминаниями: {stats['users_with_reminders']}\n"
+            f"💰 Конверсия в покупки: {stats['conversion_rate']:.2f}%"
+        )
+        
+        await message.answer(stats_message)
+    except Exception as e:
+        logger.error(f"Ошибка при получении статистики напоминаний: {e}")
+        await message.answer(f"❌ Ошибка при получении статистики: {str(e)}")
+
 async def on_startup(dp):
     logger.info("Бот запущен!")
+    
+    # Запускаем систему напоминаний
+    if reminder_system:
+        await reminder_system.start()
+        logger.info("Система напоминаний запущена")
 
 async def on_shutdown(dp):
+    logger.info("Бот останавливается...")
+    
+    # Останавливаем систему напоминаний
+    if reminder_system:
+        await reminder_system.stop()
+        logger.info("Система напоминаний остановлена")
+    
     logger.info("Бот остановлен!")
 
 if __name__ == "__main__":
