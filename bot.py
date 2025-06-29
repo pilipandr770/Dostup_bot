@@ -1032,6 +1032,18 @@ async def on_shutdown(dp):
     
     logger.info("Бот остановлен!")
 
+# Функция для запуска бота из внешнего скрипта (для Render)
+def main():
+    from aiogram import executor
+    logger.info("Запуск бота через функцию main()")
+    executor.start_polling(
+        dp, 
+        on_startup=on_startup, 
+        on_shutdown=on_shutdown, 
+        skip_updates=True,
+        allowed_updates=["message", "callback_query", "pre_checkout_query", "chat_join_request"]
+    )
+
 if __name__ == "__main__":
     from aiogram import executor
     # Явно указываем allowed_updates, чтобы получать callback_query от inline-кнопок
