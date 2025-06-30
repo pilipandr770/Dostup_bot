@@ -73,6 +73,7 @@ if not import_successful:
         print(f"Не удалось импортировать из reminder_system: {e}")
     except Exception as e:
         print(f"Ошибка при импорте из reminder_system: {e}")
+        pass
 
 # Используем заглушку, если обе попытки не удались
 if not import_successful:
