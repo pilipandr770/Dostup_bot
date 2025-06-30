@@ -1,0 +1,13 @@
+name: dostup-bot-env
+channels:
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+    - aiogram==2.25.1
+    - python-dotenv==1.0.0
+    - openai>=1.3.0
+    - stripe>=5.0.0
+    - wheel
+    - aiohttp==3.8.5
