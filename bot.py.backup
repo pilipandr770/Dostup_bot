@@ -15,14 +15,27 @@ from dotenv import load_dotenv
 import openai
 # Для проверки платежей через API нам нужен модуль stripe
 import stripe
+# Импортируем модуль системы напоминаний
+from reminder_system import ReminderSystem
 
 # ───────────────────[ НАСТРОЙКА РАСШИРЕННОГО ЛОГИРОВАНИЯ ]───────────────────
+# Определяем путь для логов, совместимый с Docker и локальным запуском
+if os.path.exists("/app"):
+    # Запуск в Docker
+    log_path = "/app/bot_debug.log"
+else:
+    # Локальный запуск
+    log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot_debug.log")
+
+# Создаем директорию для логов, если ее нет
+os.makedirs(os.path.dirname(log_path), exist_ok=True)
+
 # Настраиваем расширенное логирование
 logging.basicConfig(
     level=logging.DEBUG,  # Используем DEBUG уровень для максимальной детализации
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler("c:\\Users\\ПК\\dostup_bot\\bot_debug.log", encoding='utf-8'),
+        logging.FileHandler(log_path, encoding='utf-8'),
         logging.StreamHandler(sys.stdout)
     ]
 )
@@ -76,6 +89,32 @@ bot     = Bot(BOT_TOKEN)
 storage = MemoryStorage()
 dp      = Dispatcher(bot, storage=storage)
 
+# ───────────────────[ Reminder System ]───────────────────
+# Определяем путь для базы данных напоминаний, совместимый с Docker и локальным запуском
+if os.path.exists("/app"):
+    # Запуск в Docker
+    reminder_db_path = "/app/reminder_data.db"
+else:
+    # Локальный запуск
+    reminder_db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reminder_data.db")
+
+# Инициализируем систему напоминаний
+reminder_system = None
+if openai_client_ready:
+    reminder_system = ReminderSystem(
+        bot=bot, 
+        db_path=reminder_db_path,
+        openai_client=openai,
+        openai_assistant_id=OPENAI_ASSISTANT_ID
+    )
+    logger.info(f"Система напоминаний инициализирована с поддержкой OpenAI (БД: {reminder_db_path})")
+else:
+    reminder_system = ReminderSystem(
+        bot=bot,
+        db_path=reminder_db_path
+    )
+    logger.info(f"Система напоминаний инициализирована без поддержки OpenAI (БД: {reminder_db_path})")
+
 # ───────────────────[ FSM ]──────────────────────────────
 class QuestionStates(StatesGroup):
     waiting_for_question = State()
@@ -124,45 +163,58 @@ Der Vertrag kommt zustande, sobald der Kunde den Bestellvorgang abgeschlossen un
 4. Preise und Zahlung
 Alle angegebenen Preise verstehen sich als Endpreise in Euro. Die Zahlung erfolgt über die im Bestellprozess angebotenen Zahlungsmethoden. Der Zugang zum Kurs wird nach erfolgreichem Zahlungseingang freigeschaltet.
 
-5. Widerrufsrecht
-Bei digitalen Inhalten besteht kein Widerrufsrecht, sobald die Ausführung begonnen hat und der Kunde ausdrücklich zugestimmt hat.
+5. Nutzungsrechte
+Mit der Buchung erhält der Kunde ein einfaches, nicht übertragbares Nutzungsrecht zur privaten Nutzung der Inhalte. Eine Weitergabe, Vervielfältigung oder öffentliche Wiedergabe ist untersagt.
 
-6. Haftung
-Die Haftung des Anbieters ist auf Vorsatz und grobe Fahrlässigkeit beschränkt.
+6. Haftungsausschluss
+Die Inhalte wurden mit größter Sorgfalt erstellt. Für die Richtigkeit, Vollständigkeit und Aktualität wird jedoch keine Haftung übernommen. Die Nutzung der Inhalte erfolgt auf eigene Verantwortung.
 
-7. Anwendbares Recht
-Es gilt deutsches Recht.
+7. Widerruf und Verzicht
+Da es sich um digitale Inhalte handelt, die sofort nach Kauf bereitgestellt werden, besteht kein Widerrufsrecht, wenn der Kunde ausdrücklich zustimmt und bestätigt, dass er mit der Ausführung des Vertrags vor Ablauf der Widerrufsfrist beginnt.
 """,
 
     "widerruf": """📋 ДОКУМЕНТ 2: Widerrufsverzicht
 
-Ich stimme ausdrücklich zu, dass der Anbieter mit der Ausführung des Vertrages vor Ablauf der Widerrufsfrist beginnt.
+Widerrufsverzicht – Zustimmung zur vorzeitigen Vertragserfüllung
+Verzicht auf Widerrufsrecht gemäß § 356 Abs. 5 BGB
+Ich stimme ausdrücklich zu, dass Alexander Cherkasky Schlitzer Strasse 6, 60386 Frankfurt am Main vor Ablauf der Widerrufsfrist mit der Ausführung des Vertrages beginnt. Ich nehme zur Kenntnis, dass ich mit Beginn der Ausführung des Vertrages mein Widerrufsrecht verliere.
+Ich stimme dem Verzicht auf das Widerrufsrecht ausdrücklich zu.
 
-Mir ist bekannt, dass ich bei vollständiger Vertragserfüllung durch den Anbieter mein Widerrufsrecht verliere, wenn der Vertrag auf meinen ausdrücklichen Wunsch erfüllt wurde, bevor die Widerrufsfrist abgelaufen ist.
-
-Bei digitalen Inhalten, deren Bereitstellung nicht auf einem körperlichen Datenträger erfolgt, verliere ich mein Widerrufsrecht, sobald der Anbieter mit der Ausführung begonnen hat, nachdem ich ausdrücklich zugestimmt habe und bestätigt habe, dass ich mein Widerrufsrecht bei Beginn der Ausführung verliere.
-
-Ich bestätige hiermit meinen ausdrücklichen Verzicht auf das Widerrufsrecht.
+Отказ от права на отзыв – Согласие на досрочное выполнение договора
+Отказ от права на отзыв в соответствии с § 356, абз. 5 Гражданского кодекса Германии (BGB)
+Я даю явное согласие на то, что Alexander Cherkasky Schlitzer Strasse 6, 60386 Frankfurt am Main начнёт выполнение договора до истечения срока отзыва. Я принимаю к сведению, что с началом исполнения договора я теряю своё право на отзыв.
+Я явно соглашаюсь на отказ от права на отзыв.
 """,
 
     "datenschutz": """📋 ДОКУМЕНТ 3: Datenschutzerklärung
 
-1. Datenerhebung und -verarbeitung
-Wir erheben und verarbeiten personenbezogene Daten nur im Rahmen der gesetzlichen Bestimmungen der DSGVO.
+1. Verantwortlicher
+Verantwortlich für die Datenverarbeitung ist:
+Firma Alexander Cherkasky 
+Schlitzer Strasse 6, 60386 Frankfurt am Main
+[+4917624160386 / E-Mail-Adresse a.cherkasky@rusverlag.de]
 
-2. Zweck der Datenverarbeitung
-Ihre Daten werden ausschließlich zur Abwicklung des Kaufvertrages und zur Bereitstellung des erworbenen Online-Kurses verwendet.
+2. Erhebung und Speicherung personenbezogener Daten
+Wir erheben personenbezogene Daten (z. B. Name, E-Mail-Adresse, Zahlungsdaten), die zur Vertragsabwicklung und Kundenbetreuung erforderlich sind.
 
-3. Datenweitergabe
-Eine Weitergabe Ihrer Daten an Dritte erfolgt nur, soweit dies zur Vertragsabwicklung erforderlich ist (z.B. Zahlungsabwicklung).
+3. Zweck der Datenverarbeitung
+Die Daten werden ausschließlich zur Vertragserfüllung, Kundenkommunikation, Zahlungsabwicklung und Bereitstellung der Online-Kurse verarbeitet.
 
-4. Ihre Rechte
-Sie haben das Recht auf Auskunft, Berichtigung, Löschung und Einschränkung der Verarbeitung Ihrer Daten.
+4. Weitergabe an Dritte
+Eine Weitergabe an Dritte erfolgt nur, soweit dies zur Vertragserfüllung notwendig ist (z. B. Zahlungsdienstleister).
 
-5. Kontakt
-Für Fragen zum Datenschutz kontaktieren Sie uns unter: [Kontaktdaten]
+5. Speicherdauer
+Personenbezogene Daten werden nur so lange gespeichert, wie es für die genannten Zwecke erforderlich ist oder gesetzliche Aufbewahrungsfristen bestehen.
 
-Mit der Zustimmung erklären Sie sich mit der Verarbeitung Ihrer Daten gemäß dieser Datenschutzerklärung einverstanden.
+6. Ihre Rechte
+Sie haben jederzeit das Recht auf Auskunft, Berichtigung, Löschung, Einschränkung der Verarbeitung sowie Widerspruch und Datenübertragbarkeit. Bitte wenden Sie sich dazu an [Kontaktadresse].
+
+7. Sicherheit
+Wir setzen technische und organisatorische Sicherheitsmaßnahmen ein, um Ihre Daten vor Verlust oder unbefugtem Zugriff zu schützen.
+
+8. Kontakt Datenschutzbeauftragter
+Bei Fragen zum Datenschutz wenden Sie sich bitte an:
+Firma Alexander Cherkasky a.cherkasky@rusverlag.de
 """
 }
 
@@ -358,6 +410,12 @@ async def send_course_access(user_id: int):
     """Выдаёт доступ пользователю к курсу"""
     try:
         logger.info(f"Попытка выдать доступ пользователю {user_id}")
+        
+        # Обновляем статус в системе напоминаний
+        if reminder_system:
+            await reminder_system.mark_user_purchased(user_id)
+            logger.info(f"Пользователь {user_id} отмечен как оплативший в системе напоминаний")
+        
         # Пробуем добавить пользователя в закрытый канал
         if COURSE_CHANNEL_ID:
             try:
@@ -422,11 +480,25 @@ async def cmd_start(message: types.Message, state: FSMContext):
 # ─────────[ Безкоштовний урок ]──────────────────────────
 @dp.message_handler(lambda m: m.text.lower() == "🎬 получить бесплатный урок")
 async def send_free_lesson(message: types.Message):
-    logger.debug(f"Запрос бесплатного урока от {message.from_user.id}")
+    user = message.from_user
+    user_id = user.id
+    logger.debug(f"Запрос бесплатного урока от {user_id}")
+    
+    # Отправляем урок
     await message.answer(
         f"🎬 Вот твой бесплатный ознакомительный урок!\n\nСмотри на YouTube: {YOUTUBE_CHANNEL_URL}",
         reply_markup=main_menu
     )
+    
+    # Записываем просмотр для системы напоминаний
+    if reminder_system:
+        await reminder_system.track_lesson_view(
+            user_id=user_id,
+            username=user.username,
+            first_name=user.first_name,
+            last_name=user.last_name
+        )
+        logger.debug(f"Просмотр урока записан в систему напоминаний для пользователя {user_id}")
 
 # ─────────[ Меню покупки ]───────────────────────────────
 @dp.message_handler(lambda m: m.text.lower() == "💳 оплатить 149€")
@@ -913,11 +985,64 @@ async def grant_access(message: types.Message):
         logger.error(f"Ошибка при выдаче доступа: {e}")
         await message.answer(f"❌ Ошибка: {e}")
 
+# Команда для проверки статистики напоминаний (для администратора)
+@dp.message_handler(commands=["reminders"])
+@dp.message_handler(lambda m: m.text.lower().startswith("статистика напоминаний") and m.from_user.id == ADMIN_USER_ID)
+async def check_reminder_stats(message: types.Message):
+    logger.info(f"Администратор запросил статистику напоминаний")
+    
+    if not reminder_system:
+        await message.answer("❌ Система напоминаний не инициализирована.")
+        return
+    
+    try:
+        # Получаем статистику из модуля напоминаний
+        from reminder_system import get_reminder_stats
+        stats = await get_reminder_stats(reminder_system.db_path)
+        
+        # Формируем сообщение
+        stats_message = (
+            "📊 Статистика системы напоминаний:\n\n"
+            f"👥 Всего пользователей: {stats['total_users']}\n"
+            f"📨 Отправлено напоминаний: {stats['reminders_sent']}\n"
+            f"👤 Пользователей с напоминаниями: {stats['users_with_reminders']}\n"
+            f"💰 Конверсия в покупки: {stats['conversion_rate']:.2f}%"
+        )
+        
+        await message.answer(stats_message)
+    except Exception as e:
+        logger.error(f"Ошибка при получении статистики напоминаний: {e}")
+        await message.answer(f"❌ Ошибка при получении статистики: {str(e)}")
+
 async def on_startup(dp):
     logger.info("Бот запущен!")
+    
+    # Запускаем систему напоминаний
+    if reminder_system:
+        await reminder_system.start()
+        logger.info("Система напоминаний запущена")
 
 async def on_shutdown(dp):
+    logger.info("Бот останавливается...")
+    
+    # Останавливаем систему напоминаний
+    if reminder_system:
+        await reminder_system.stop()
+        logger.info("Система напоминаний остановлена")
+    
     logger.info("Бот остановлен!")
+
+# Функция для запуска бота из внешнего скрипта (для Render)
+def main():
+    from aiogram import executor
+    logger.info("Запуск бота через функцию main()")
+    executor.start_polling(
+        dp, 
+        on_startup=on_startup, 
+        on_shutdown=on_shutdown, 
+        skip_updates=True,
+        allowed_updates=["message", "callback_query", "pre_checkout_query", "chat_join_request"]
+    )
 
 if __name__ == "__main__":
     from aiogram import executor

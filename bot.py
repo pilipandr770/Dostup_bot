@@ -1,9 +1,9 @@
-import asyncio
-import logging
-import os
-import time
-import sys
 from pathlib import Path
+import sys
+import os
+import logging
+import time
+import openai
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
@@ -12,13 +12,73 @@ from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.types import (InlineKeyboardButton, InlineKeyboardMarkup,
                            KeyboardButton, ReplyKeyboardMarkup)
 from dotenv import load_dotenv
-import openai
-# Для проверки платежей через API нам нужен модуль stripe
 import stripe
-# Импортируем модуль системы напоминаний
-from reminder_system import ReminderSystem
 
-# ───────────────────[ НАСТРОЙКА РАСШИРЕННОГО ЛОГИРОВАНИЯ ]───────────────────
+# Импорт системы напоминаний
+# Попытка импорта ReminderSystem с разных путей
+ReminderSystem = None
+
+def create_placeholder_reminder_system():
+    """Creates a placeholder class for ReminderSystem when import fails"""
+    class PlaceholderReminderSystem:
+        def __init__(self, bot, db_path=None, reminder_intervals=None,
+                    openai_client=None, openai_assistant_id=None):
+            print("Using placeholder ReminderSystem - reminders will not work!")
+            self.bot = bot
+            self.is_running = False
+
+        async def start(self):
+            print("Placeholder ReminderSystem.start() called")
+            self.is_running = True
+
+        async def stop(self):
+            print("Placeholder ReminderSystem.stop() called")
+            self.is_running = False
+
+        async def track_free_lesson_view(self, user_id):
+            print(f"Placeholder track_free_lesson_view called for user {user_id}")
+
+        async def track_lesson_view(self, user_id, username=None, first_name=None, last_name=None):
+            print(f"Placeholder track_lesson_view called for user {user_id}")
+            
+        async def mark_user_purchased(self, user_id):
+            print(f"Placeholder mark_user_purchased called for user {user_id}")
+            
+        def get_stats(self):
+            return {"error": "ReminderSystem not available"}
+    
+    print("Created placeholder ReminderSystem class to prevent crashes")
+    return PlaceholderReminderSystem()  # Instantiate the class when returning
+
+# Импорт с обработкой ошибок - полностью переписан для Docker-совместимости
+# Простая и надежная схема импорта без вложенных блоков
+import_successful = False
+
+# Первая попытка импорта
+try:
+    from app.reminder_system import ReminderSystem
+    print("ReminderSystem импортирован из app")
+    import_successful = True
+except ImportError:
+    print("Не удалось импортировать из app.reminder_system")
+
+# Вторая попытка импорта, если первая не удалась
+if not import_successful:
+    try:
+        sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+        from reminder_system import ReminderSystem
+        print("ReminderSystem импортирован после добавления пути")
+        import_successful = True
+    except ImportError as e:
+        print(f"Не удалось импортировать из reminder_system: {e}")
+    except Exception as e:
+        print(f"Ошибка при импорте из reminder_system: {e}")
+
+# Используем заглушку, если обе попытки не удались
+if not import_successful:
+    print("Используем заглушку ReminderSystem")
+    ReminderSystem = create_placeholder_reminder_system()
+# [НАСТРОЙКА РАСШИРЕННОГО ЛОГИРОВАНИЯ]
 # Определяем путь для логов, совместимый с Docker и локальным запуском
 if os.path.exists("/app"):
     # Запуск в Docker
@@ -43,7 +103,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 logger.info("=== ЗАПУСК БОТА С РАСШИРЕННЫМ ЛОГИРОВАНИЕМ ===")
 
-# ───────────────────[ CONFIG ]───────────────────────────
+# [CONFIG]
 load_dotenv()
 BOT_TOKEN           = os.getenv('BOT_TOKEN')
 COURSE_CHANNEL_ID   = os.getenv('COURSE_CHANNEL_ID')
@@ -63,7 +123,7 @@ if not BOT_TOKEN or BOT_TOKEN == 'YOUR_REAL_BOT_TOKEN_HERE':
     logger.error("BOT_TOKEN не налаштовано!")
     raise SystemExit(1)
 
-# ───────────────────[ OpenAI ]───────────────────────────
+# [OpenAI]
 openai_client_ready = False
 if OPENAI_API_KEY and OPENAI_API_KEY != 'your_openai_api_key_here':
     openai.api_key = OPENAI_API_KEY
@@ -72,7 +132,7 @@ if OPENAI_API_KEY and OPENAI_API_KEY != 'your_openai_api_key_here':
 else:
     logger.warning("OpenAI API-ключ не задано — функції Assistant вимкнені")
 
-# ───────────────────[ Stripe ]───────────────────────────
+# [Stripe]
 # Инициализация API Stripe для проверки платежей
 stripe_client_ready = False
 # Получаем ключ из переменных окружения
@@ -84,12 +144,12 @@ if STRIPE_API_KEY and STRIPE_API_KEY != 'your_stripe_api_key_here':
 else:
     logger.warning("STRIPE_API_KEY не задан — проверка платежей будет недоступна")
 
-# ───────────────────[ Aiogram ]──────────────────────────
+# [Aiogram]
 bot     = Bot(BOT_TOKEN)
 storage = MemoryStorage()
 dp      = Dispatcher(bot, storage=storage)
 
-# ───────────────────[ Reminder System ]───────────────────
+# [Reminder System]
 # Определяем путь для базы данных напоминаний, совместимый с Docker и локальным запуском
 if os.path.exists("/app"):
     # Запуск в Docker
@@ -115,7 +175,7 @@ else:
     )
     logger.info(f"Система напоминаний инициализирована без поддержки OpenAI (БД: {reminder_db_path})")
 
-# ───────────────────[ FSM ]──────────────────────────────
+# [FSM]
 class QuestionStates(StatesGroup):
     waiting_for_question = State()
     
@@ -128,28 +188,28 @@ class AgreementStates(StatesGroup):
     waiting_for_widerruf = State()
     waiting_for_datenschutz = State()
 
-# ───────────────────[ DATA ]─────────────────────────────
+# [ DATA ]
 # Данные курса - упрощенная версия, только один курс за 149€
 COURSE_TITLE = "Успешный YouTube-бизнес с нуля"
 COURSE_DESCRIPTION = "Полный доступ к курсу и закрытому сообществу"
 COURSE_PRICE_EUR = 149
 
-# ───────────────────[ KEYBOARDS ]────────────────────────
+# [ KEYBOARDS ]
 main_menu = ReplyKeyboardMarkup(
     [
         [KeyboardButton("🎬 Получить бесплатный урок")],
         [KeyboardButton("💳 Оплатить 149€")],
         [KeyboardButton("✅ Проверить оплату")],
-        [KeyboardButton("❓ Задать вопрос")]
+        [KeyboardButton("❓ Задать вопрос")],
+        [KeyboardButton("📋 Datenschutz"), KeyboardButton("📄 AGB"), KeyboardButton("📝 Impressum")]
     ],
     resize_keyboard=True
 )
 
-# ───────────────────[ Legal Documents Helpers ]───────────────────
+# [Legal Documents Helpers]
 # Жестко закодированные тексты документов
 LEGAL_DOCS = {
-    "agb": """📋 ДОКУМЕНТ 1: Allgemeine Geschäftsbedingungen (AGB)
-für den Online-Verkauf digitaler Inhalte (Online-Kurse)
+    "agb": """� AGB
 
 1. Geltungsbereich
 Diese Allgemeinen Geschäftsbedingungen (AGB) gelten für alle Verträge zwischen Firma Alexander Cherkasky Schlitzer Strasse 6, 60386 Frankfurt am Main (nachfolgend „Anbieter") und dem Kunden über den Erwerb und die Nutzung digitaler Inhalte, insbesondere Online-Kurse über die Plattform YouTube oder andere digitale Plattformen.
@@ -173,11 +233,11 @@ Die Inhalte wurden mit größter Sorgfalt erstellt. Für die Richtigkeit, Vollst
 Da es sich um digitale Inhalte handelt, die sofort nach Kauf bereitgestellt werden, besteht kein Widerrufsrecht, wenn der Kunde ausdrücklich zustimmt und bestätigt, dass er mit der Ausführung des Vertrags vor Ablauf der Widerrufsfrist beginnt.
 """,
 
-    "widerruf": """📋 ДОКУМЕНТ 2: Widerrufsverzicht
+    "widerruf": """⚠️ Widerrufsverzicht
 
 Widerrufsverzicht – Zustimmung zur vorzeitigen Vertragserfüllung
 Verzicht auf Widerrufsrecht gemäß § 356 Abs. 5 BGB
-Ich stimme ausdrücklich zu, dass Alexander Cherkasky Schlitzer Strasse 6, 60386 Frankfurt am Main vor Ablauf der Widerrufsfrist mit der Ausführung des Vertrages beginnt. Ich nehme zur Kenntnis, dass ich mit Beginn der Ausführung des Vertrages mein Widerrufsrecht verliere.
+Ich stimme ausdrücklich zu, dass Alexander Cherkasky Schlitzer Strasse 6, 60386 Frankfurt am Main vor Ablauf der Widerrufsfrist mit der Ausführung des Vertrages beginnt. Ich nehme zur Kenntnis, dass ich mit Beginn der Ausführung des Vertrates mein Widerrufsrecht verliere.
 Ich stimme dem Verzicht auf das Widerrufsrecht ausdrücklich zu.
 
 Отказ от права на отзыв – Согласие на досрочное выполнение договора
@@ -186,7 +246,7 @@ Ich stimme dem Verzicht auf das Widerrufsrecht ausdrücklich zu.
 Я явно соглашаюсь на отказ от права на отзыв.
 """,
 
-    "datenschutz": """📋 ДОКУМЕНТ 3: Datenschutzerklärung
+    "datenschutz": """📋 Datenschutzerklärung
 
 1. Verantwortlicher
 Verantwortlich für die Datenverarbeitung ist:
@@ -215,6 +275,32 @@ Wir setzen technische und organisatorische Sicherheitsmaßnahmen ein, um Ihre Da
 8. Kontakt Datenschutzbeauftragter
 Bei Fragen zum Datenschutz wenden Sie sich bitte an:
 Firma Alexander Cherkasky a.cherkasky@rusverlag.de
+""",
+
+    "impressum": """📋 IMPRESSUM
+
+Alexander Cherkasky Media
+Schlitzer Straße 6
+60386 Frankfurt
+Deutschland
+
+Steuernummer:
+DE454894230
+
+Bankverbindung:
+Frankfurter Volksbank
+IBAN: DE30 5019 0000 6000 4445 19
+
+Kontakt:
+Tel: +4917624160386
+E-Mail: a.cherkasky@rusverlag.de
+
+Verantwortlich für den Inhalt:
+Alexander Cherkasky
+
+Plattform der EU-Kommission zur Online-Streitbeilegung: https://ec.europa.eu/consumers/odr
+
+Wir sind zur Teilnahme an einem Streitbeilegungsverfahren vor einer Verbraucherschlichtungsstelle weder verpflichtet noch bereit.
 """
 }
 
@@ -245,7 +331,7 @@ def get_agreement_keyboard(doc_type: str) -> InlineKeyboardMarkup:
     )
     return keyboard
 
-# ───────────────────[ OpenAI helper ]────────────────────
+# [OpenAI helper]
 # Для работы с OpenAI Assistant API требуется openai>=1.3.0
 async def ask_assistant(question: str) -> str:
     if not openai_client_ready:
@@ -282,7 +368,7 @@ async def ask_assistant(question: str) -> str:
         logger.error(f"OpenAI Assistant error: {e}")
         return "❌ Ошибка OpenAI Assistant, попробуйте позже."
 
-# ───────────────────[ Stripe helper ]────────────────────
+# [Stripe helper]
 async def check_stripe_payment_by_email(email: str) -> bool:
     """Проверяет наличие успешного платежа по email покупателя"""
     if not stripe_client_ready:
@@ -427,6 +513,15 @@ async def send_course_access(user_id: int):
                 logger.info(f"Пользователь {user_id} добавлен в канал {COURSE_CHANNEL_ID}")
             except Exception as e:
                 logger.error(f"Ошибка при добавлении пользователя {user_id} в канал: {e}")
+                # Пробуем отправить ссылку на канал вместо прямого добавления
+                try:
+                    await bot.send_message(
+                        chat_id=user_id,
+                        text=f"Для доступа к курсу, перейдите по этой ссылке: {CHANNEL_INVITE_LINK}"
+                    )
+                    logger.info(f"Отправлена ссылка на канал пользователю {user_id}")
+                except Exception as inner_e:
+                    logger.error(f"Не удалось отправить ссылку на канал: {inner_e}")
         
         # Отправляем пользователю приветствие и ссылку на канал
         await bot.send_message(
@@ -459,10 +554,11 @@ async def send_course_access(user_id: int):
                     "Если у вас возникнут вопросы, не стесняйтесь обращаться к администратору."
                 )
             )
-        except Exception:
+        except Exception as e2:
+            logger.error(f"Не удалось отправить ссылку пользователю {user_id}: {e2}")
             logger.error(f"Критическая ошибка: невозможно отправить сообщение пользователю {user_id}")
 
-# ───────────────────[ HANDLERS ]─────────────────────────
+# [HANDLERS]
 @dp.message_handler(commands=["start"])
 @dp.message_handler(lambda m: m.text.lower() == "старт")
 async def cmd_start(message: types.Message, state: FSMContext):
@@ -503,7 +599,7 @@ async def send_free_lesson(message: types.Message):
 # ─────────[ Меню покупки ]───────────────────────────────
 @dp.message_handler(lambda m: m.text.lower() == "💳 оплатить 149€")
 async def payment_start_agreement(message: types.Message, state: FSMContext):
-    """Начинаем процесс принятия правовых документов - с подробным логированием"""
+    """Показываем отказ от возврата платежа (Widerruf) перед оплатой"""
     user_id = message.from_user.id
     logger.info(f"Пользователь {user_id} запустил процесс оплаты")
     
@@ -511,33 +607,33 @@ async def payment_start_agreement(message: types.Message, state: FSMContext):
         # Замер времени для отладки
         start_time = time.time()
         
-        # Получаем первый документ
-        logger.debug(f"Получаем документ AGB для пользователя {user_id}")
-        agb_text = await get_document("agb")
-        logger.debug(f"Документ AGB получен за {time.time() - start_time:.4f} сек")
+        # Получаем документ отказа от возврата платежа
+        logger.debug(f"Получаем документ Widerruf для пользователя {user_id}")
+        widerruf_text = await get_document("widerruf")
+        logger.debug(f"Документ Widerruf получен за {time.time() - start_time:.4f} сек")
         
         # Если текст слишком длинный, обрезаем его
-        if len(agb_text) > 3900:
-            logger.debug(f"Обрезаем документ AGB (длина: {len(agb_text)})")
-            agb_text = agb_text[:3900] + "...\n(Документ обрезан из-за ограничений Telegram)"
+        if len(widerruf_text) > 3900:
+            logger.debug(f"Обрезаем документ Widerruf (длина: {len(widerruf_text)})")
+            widerruf_text = widerruf_text[:3900] + "...\n(Документ обрезан из-за ограничений Telegram)"
         
         # Создаем клавиатуру
-        logger.debug(f"Создаем клавиатуру для AGB")
-        keyboard = get_agreement_keyboard("agb")
+        logger.debug(f"Создаем клавиатуру для Widerruf")
+        keyboard = get_agreement_keyboard("widerruf")
         
         # Отправляем сообщение
-        logger.debug(f"Отправляем документ AGB пользователю {user_id}")
+        logger.debug(f"Отправляем документ Widerruf пользователю {user_id}")
         message_start_time = time.time()
         await message.answer(
-            "📝 Документ 1/3: ALLGEMEINE GESCHÄFTSBEDINGUNGEN (AGB)\n\n" + agb_text,
+            "📝 ОТКАЗ ОТ ПРАВА НА ВОЗВРАТ СРЕДСТВ\n\nДля продолжения оплаты, пожалуйста, ознакомьтесь и примите этот документ:\n\n" + widerruf_text,
             reply_markup=keyboard
         )
-        logger.debug(f"Сообщение с AGB отправлено за {time.time() - message_start_time:.4f} сек")
+        logger.debug(f"Сообщение с Widerruf отправлено за {time.time() - message_start_time:.4f} сек")
         
         # Устанавливаем состояние
-        logger.debug(f"Устанавливаем состояние waiting_for_agb для пользователя {user_id}")
+        logger.debug(f"Устанавливаем состояние waiting_for_widerruf для пользователя {user_id}")
         state_start_time = time.time()
-        await AgreementStates.waiting_for_agb.set()
+        await AgreementStates.waiting_for_widerruf.set()
         logger.debug(f"Состояние установлено за {time.time() - state_start_time:.4f} сек")
         
         # Общее время выполнения
@@ -619,7 +715,7 @@ async def process_agb_agreement(callback_query: types.CallbackQuery, state: FSMC
 # Обработчик согласия с Widerruf (второй документ)
 @dp.callback_query_handler(lambda c: c.data == "agree_widerruf", state=AgreementStates.waiting_for_widerruf)
 async def process_widerruf_agreement(callback_query: types.CallbackQuery, state: FSMContext):
-    """Обработчик согласия с Widerruf - с подробным логированием"""
+    """Обработчик согласия с Widerruf - показывает кнопку оплаты сразу после согласия"""
     user_id = callback_query.from_user.id
     logger.info(f"👍 Пользователь {user_id} нажал СОГЛАСЕН с Widerruf")
     start_time = time.time()
@@ -630,34 +726,26 @@ async def process_widerruf_agreement(callback_query: types.CallbackQuery, state:
         await callback_query.answer(text="✅ Принято", show_alert=False)
         logger.debug(f"Ответ на callback выполнен за {time.time() - start_time:.4f} сек")
         
-        # Получаем третий документ
-        doc_start_time = time.time()
-        logger.debug(f"Получаем документ Datenschutz для пользователя {user_id}")
-        datenschutz_text = await get_document("datenschutz")
-        logger.debug(f"Документ Datenschutz получен за {time.time() - doc_start_time:.4f} сек")
+        # Завершаем FSM-состояние
+        state_time = time.time()
+        logger.debug(f"Завершаем состояние для пользователя {user_id}")
+        await state.finish()
+        logger.debug(f"Состояние завершено за {time.time() - state_time:.4f} сек")
         
-        # Обрезаем при необходимости
-        if len(datenschutz_text) > 3900:
-            datenschutz_text = datenschutz_text[:3900] + "...\n(Документ обрезан)"
-        
-        # Готовим клавиатуру
-        keyboard_time = time.time()
-        keyboard = get_agreement_keyboard("datenschutz")
-        logger.debug(f"Клавиатура для Datenschutz создана за {time.time() - keyboard_time:.4f} сек")
-        
-        # Отправляем новое сообщение вместо редактирования текущего для надёжности
+        # Отправляем сообщение и кнопку оплаты
         send_start_time = time.time()
-        logger.debug(f"Отправляем Datenschutz пользователю {user_id}")
+        logger.debug(f"Отправляем кнопку оплаты пользователю {user_id}")
+        
+        # Создаем inline клавиатуру для оплаты
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(InlineKeyboardButton("💳 Оплатить курс (149€)", url=STRIPE_PAYMENT_URL))
+        
         await callback_query.message.answer(
-            "📝 Документ 3/3: DATENSCHUTZERKLÄRUNG\n\n" + datenschutz_text,
+            f"� Оплата курса '{COURSE_TITLE}' — {COURSE_PRICE_EUR}€\n\n"
+            "✅ После оплаты используйте /check_payment для проверки", 
             reply_markup=keyboard
         )
-        logger.debug(f"Сообщение с Datenschutz отправлено за {time.time() - send_start_time:.4f} сек")
-        
-        # Меняем состояние
-        state_time = time.time()
-        await AgreementStates.waiting_for_datenschutz.set()
-        logger.debug(f"Состояние изменено на waiting_for_datenschutz за {time.time() - state_time:.4f} сек")
+        logger.debug(f"Кнопка оплаты отправлена за {time.time() - send_start_time:.4f} сек")
         
         # Общее время выполнения
         total_time = time.time() - start_time
@@ -682,70 +770,12 @@ async def process_widerruf_agreement(callback_query: types.CallbackQuery, state:
         logger.debug(f"Обработка ошибки заняла {time.time() - error_time:.4f} сек")
 
 # Обработчик согласия с Datenschutz (третий документ)
-@dp.callback_query_handler(lambda c: c.data == "agree_datenschutz", state=AgreementStates.waiting_for_datenschutz)
-async def process_datenschutz_agreement(callback_query: types.CallbackQuery, state: FSMContext):
-    """Обработчик согласия с Datenschutz - с подробным логированием"""
-    user_id = callback_query.from_user.id
-    logger.info(f"👍 Пользователь {user_id} нажал СОГЛАСЕН с Datenschutz")
-    start_time = time.time()
-    
-    try:
-        # ВАЖНО: Сначала отвечаем на callback, чтобы убрать индикатор загрузки!
-        logger.debug("Отвечаем на callback query для скрытия индикатора загрузки")
-        await callback_query.answer(text="✅ Принято", show_alert=False)
-        logger.debug(f"Ответ на callback выполнен за {time.time() - start_time:.4f} сек")
-        
-        # Завершаем FSM-состояние
-        state_time = time.time()
-        logger.debug(f"Завершаем состояние для пользователя {user_id}")
-        await state.finish()
-        logger.debug(f"Состояние завершено за {time.time() - state_time:.4f} сек")
-        
-        # Отправляем сообщение и кнопку оплаты
-        send_start_time = time.time()
-        logger.debug(f"Отправляем кнопку оплаты пользователю {user_id}")
-        
-        # Создаем inline клавиатуру для оплаты
-        keyboard = InlineKeyboardMarkup()
-        keyboard.add(InlineKeyboardButton("💳 Оплатить курс (149€)", url=STRIPE_PAYMENT_URL))
-        
-        await callback_query.message.answer(
-            f"💳 Оплата курса '{COURSE_TITLE}' — {COURSE_PRICE_EUR}€\n\n"
-            "✅ После оплаты используйте /check_payment для проверки", 
-            reply_markup=keyboard
-        )
-        logger.debug(f"Кнопка оплаты отправлена за {time.time() - send_start_time:.4f} сек")
-        
-        # Общее время выполнения
-        total_time = time.time() - start_time
-        logger.info(f"Обработка согласия с Datenschutz завершена за {total_time:.4f} сек")
-        
-    except Exception as e:
-        logger.error(f"❌ ОШИБКА при обработке согласия с Datenschutz: {e}", exc_info=True)
-        error_time = time.time()
-        
-        # Пытаемся сообщить пользователю об ошибке
-        try:
-            await callback_query.message.answer(
-                "❌ Произошла ошибка при обработке запроса.\n"
-                "Пожалуйста, начните процесс заново с команды /start",
-                reply_markup=main_menu
-            )
-        except Exception as msg_error:
-            logger.error(f"Не удалось отправить сообщение об ошибке: {msg_error}")
-        
-        # Сбрасываем состояние
-        await state.finish()
-        logger.debug(f"Обработка ошибки заняла {time.time() - error_time:.4f} сек")
+# Обработчик для Datenschutz удален - теперь доступен через постоянную кнопку в меню
 
-# Обработчик отмены на любом этапе согласия
-@dp.callback_query_handler(lambda c: c.data == "cancel_agreement", state=[
-    AgreementStates.waiting_for_agb,
-    AgreementStates.waiting_for_widerruf,
-    AgreementStates.waiting_for_datenschutz
-])
+# Обработчик отмены на этапе согласия с Widerruf
+@dp.callback_query_handler(lambda c: c.data == "cancel_agreement", state=AgreementStates.waiting_for_widerruf)
 async def cancel_agreement(callback_query: types.CallbackQuery, state: FSMContext):
-    """Обработчик отмены согласия - с подробным логированием"""
+    """Обработчик отмены согласия с отказом от права возврата средств"""
     user_id = callback_query.from_user.id
     start_time = time.time()
     
@@ -1014,6 +1044,39 @@ async def check_reminder_stats(message: types.Message):
         logger.error(f"Ошибка при получении статистики напоминаний: {e}")
         await message.answer(f"❌ Ошибка при получении статистики: {str(e)}")
 
+@dp.message_handler(lambda m: m.text == "📋 Datenschutz")
+async def show_datenschutz(message: types.Message):
+    """Обработчик для показа Datenschutz (политики конфиденциальности)"""
+    logger.info(f"Пользователь {message.from_user.id} запросил Datenschutz")
+    
+    # Получаем текст документа
+    doc_text = await get_document("datenschutz")
+    
+    # Отправляем текст с политикой конфиденциальности
+    await message.answer(doc_text, reply_markup=main_menu)
+
+@dp.message_handler(lambda m: m.text == "📝 Impressum")
+async def show_impressum(message: types.Message):
+    """Обработчик для показа Impressum"""
+    logger.info(f"Пользователь {message.from_user.id} запросил Impressum")
+    
+    # Получаем текст Impressum
+    doc_text = await get_document("impressum")
+    
+    # Отправляем текст Impressum
+    await message.answer(doc_text, reply_markup=main_menu)
+
+@dp.message_handler(lambda m: m.text == "📄 AGB" or m.text == "AGB" or m.text.lower() == "agb")
+async def show_agb(message: types.Message):
+    """Обработчик для показа AGB (общие условия)"""
+    logger.info(f"Пользователь {message.from_user.id} запросил AGB")
+    
+    # Получаем текст документа
+    doc_text = await get_document("agb")
+    
+    # Отправляем текст с общими условиями
+    await message.answer(doc_text, reply_markup=main_menu)
+
 async def on_startup(dp):
     logger.info("Бот запущен!")
     
@@ -1032,10 +1095,31 @@ async def on_shutdown(dp):
     
     logger.info("Бот остановлен!")
 
+# Функция, которая запускается при запуске бота
+async def main():
+    # Запускаем систему напоминаний, если она создана
+    if reminder_system and not reminder_system.is_running:
+        await reminder_system.start()
+        logger.info("Система напоминаний запущена")
+    
+    # Запускаем поллинг бота
+    try:
+        logger.info("Бот запущен!")
+        await dp.start_polling()
+    except Exception as e:
+        logger.error(f"Ошибка при запуске бота: {e}")
+    finally:
+        # При завершении работы останавливаем систему напоминаний
+        logger.info("Бот останавливается...")
+        if reminder_system and reminder_system.is_running:
+            await reminder_system.stop()
+            logger.info("Система напоминаний остановлена")
+        logger.info("Бот остановлен!")
+
 # Функция для запуска бота из внешнего скрипта (для Render)
-def main():
+def start_polling():
     from aiogram import executor
-    logger.info("Запуск бота через функцию main()")
+    logger.info("Запуск бота через функцию start_polling()")
     executor.start_polling(
         dp, 
         on_startup=on_startup, 
@@ -1044,13 +1128,9 @@ def main():
         allowed_updates=["message", "callback_query", "pre_checkout_query", "chat_join_request"]
     )
 
+# Запуск бота при прямом запуске файла
 if __name__ == "__main__":
-    from aiogram import executor
-    # Явно указываем allowed_updates, чтобы получать callback_query от inline-кнопок
-    executor.start_polling(
-        dp, 
-        on_startup=on_startup, 
-        on_shutdown=on_shutdown, 
-        skip_updates=True,
-        allowed_updates=["message", "callback_query", "pre_checkout_query", "chat_join_request"]
-    )
+    import asyncio
+    asyncio.run(main())
+
+
