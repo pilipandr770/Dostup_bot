@@ -339,32 +339,32 @@ async def ask_assistant(question: str) -> str:
         return "❌ OpenAI Assistant недоступен."
     try:
         logger.info(f"Отправка вопроса в OpenAI: {question[:50]}...")
-        # Используем OpenAI Assistants API (asst_...)
-        thread = openai.beta.threads.create()
-        openai.beta.threads.messages.create(
-            thread_id=thread.id,
-            role="user",
-            content=question
-        )
-        run = openai.beta.threads.runs.create(
-            thread_id=thread.id,
-            assistant_id=OPENAI_ASSISTANT_ID
-        )
-        # Ждем завершения run
+        
+        # Используем Chat Completions API с правильным разделением ролей
+        # Правильно разделяем роли: system для инструкций, user для вопроса
+        messages = [
+            {"role": "system", "content": "Вы — помощник, который отвечает на вопросы о курсе 'Успешный YouTube-бизнес с нуля'. Отвечайте кратко и точно."},
+            {"role": "user", "content": question}
+        ]
+        
+        # Отправляем запрос используя новый формат API для версии >= 1.3.0
         import time
-        while True:
-            run_status = openai.beta.threads.runs.retrieve(thread_id=thread.id, run_id=run.id)
-            if run_status.status == "completed":
-                break
-            elif run_status.status in ("failed", "cancelled", "expired"):
-                return "❌ Ошибка OpenAI Assistant. Попробуйте позже."
-            time.sleep(1)
-        messages = openai.beta.threads.messages.list(thread_id=thread.id)
-        # Берем последний ответ ассистента
-        for msg in reversed(messages.data):
-            if msg.role == "assistant":
-                return msg.content[0].text.value
-        return "❌ Нет ответа от ассистента."
+        start_time = time.time()
+        response = openai.chat.completions.create(
+            model="gpt-3.5-turbo",  # Используем модель gpt-3.5-turbo
+            messages=messages,
+            temperature=0.7,
+            max_tokens=500
+        )
+        
+        # Получаем ответ (новый формат API)
+        answer = response.choices[0].message.content
+        logger.info(f"Получен ответ от OpenAI за {time.time() - start_time:.2f} сек.")
+        return answer
+        
+    except Exception as e:
+        logger.error(f"OpenAI Assistant error: {e}")
+        return "❌ Ошибка OpenAI Assistant, попробуйте позже."
     except Exception as e:
         logger.error(f"OpenAI Assistant error: {e}")
         return "❌ Ошибка OpenAI Assistant, попробуйте позже."
