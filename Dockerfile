@@ -56,4 +56,4 @@ USER appuser
 EXPOSE 8080
 
 # Command to run the application using start.py
-CMD ["python", "../start.py"]
+CMD ["python", "start.py"]

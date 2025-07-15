@@ -6,7 +6,7 @@ services:
     dockerfilePath: ./Dockerfile
     plan: free
     autoDeploy: true
-    startCommand: chmod +x .render/run.sh && ./.render/run.sh
+    startCommand: python start.py
     envVars:
       - key: BOT_TOKEN
         sync: false
