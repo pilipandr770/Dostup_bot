@@ -5,58 +5,84 @@ set -e
 echo "Python version:"
 python --version
 
-# Create a lock file to ensure only one instance runs
-LOCK_FILE="/tmp/dostup_bot.lock"
+# Create multiple lock files for extra security
+MAIN_LOCK_FILE="/tmp/dostup_bot.lock"
+RENDER_LOCK_FILE="/tmp/dostup_bot_render.lock"
+SYSTEM_LOCK_FILE="/var/tmp/dostup_bot.lock"
 BOT_ALREADY_RUNNING=false
 
-# Check if the lock file exists and process is still running
-if [ -f "$LOCK_FILE" ]; then
-    PID=$(cat "$LOCK_FILE")
-    if ps -p "$PID" > /dev/null; then
-        echo "Bot is already running with PID $PID"
-        BOT_ALREADY_RUNNING=true
+# Function to terminate ALL existing bot processes (extra aggressive)
+kill_all_bot_processes() {
+    echo "Terminating ALL existing bot processes..."
+    # Find all python processes related to the bot
+    BOT_PIDS=$(ps aux | grep -E "python.*(bot\.py|start\.py)" | grep -v grep | awk '{print $2}')
+    
+    if [ -n "$BOT_PIDS" ]; then
+        echo "Found bot processes with PIDs: $BOT_PIDS"
+        for PID in $BOT_PIDS; do
+            echo "Killing process $PID"
+            kill -9 $PID 2>/dev/null || echo "Failed to kill $PID"
+        done
     else
-        echo "Found stale lock file. Previous process $PID is not running."
+        echo "No bot processes found to kill"
     fi
+    
+    # Wait to ensure processes are terminated
+    sleep 2
+}
+
+# Check for any existing lock files and running processes
+if [ -f "$MAIN_LOCK_FILE" ] || [ -f "$RENDER_LOCK_FILE" ] || [ -f "$SYSTEM_LOCK_FILE" ]; then
+    echo "Found existing lock file(s)"
+    
+    # Check MAIN_LOCK_FILE
+    if [ -f "$MAIN_LOCK_FILE" ]; then
+        PID=$(cat "$MAIN_LOCK_FILE")
+        if ps -p "$PID" > /dev/null; then
+            echo "Bot is already running with PID $PID (from main lock)"
+            kill_all_bot_processes
+        else
+            echo "Found stale main lock file. Previous process $PID is not running."
+        fi
+    fi
+    
+    # Clean up any lock files
+    rm -f "$MAIN_LOCK_FILE" "$RENDER_LOCK_FILE" "$SYSTEM_LOCK_FILE"
+    echo "Removed all lock files for clean start"
 fi
 
-# Terminate ANY existing bot processes to prevent conflicts (more aggressive approach)
-echo "Checking for existing bot processes..."
-if ps aux | grep -E "python.*(bot\.py|start\.py)" | grep -v grep > /dev/null; then
-  echo "Found existing bot processes:"
-  ps aux | grep -E "python.*(bot\.py|start\.py)" | grep -v grep
-  echo "Terminating existing bot processes..."
-  pkill -f "python.*bot\.py" || echo "No bot.py processes to kill"
-  pkill -f "python.*start\.py" || echo "No start.py processes to kill"
-  sleep 2
-  
-  # Double-check that processes are actually terminated
-  if ps aux | grep -E "python.*(bot\.py|start\.py)" | grep -v grep > /dev/null; then
-    echo "WARNING: Failed to terminate all bot processes. Sending SIGKILL..."
-    pkill -9 -f "python.*bot\.py" || echo "No bot.py processes to force kill"
-    pkill -9 -f "python.*start\.py" || echo "No start.py processes to force kill"
-    sleep 1
-  fi
-else
-  echo "No existing bot processes found"
-fi
+# Use the function to kill all bot processes regardless
+kill_all_bot_processes
 
-# Write current PID to lock file
-echo $$ > "$LOCK_FILE"
-echo "Created lock file with PID $$"
+# Create lock files with our PID
+echo $$ > "$MAIN_LOCK_FILE"
+echo $$ > "$RENDER_LOCK_FILE"
+[ -d "/var/tmp" ] && echo $$ > "$SYSTEM_LOCK_FILE"
+echo "Created lock files with PID $$"
 
-# Wait a moment for processes to terminate
-sleep 2
+# Additional protection - write process info to a marker file
+BOT_INFO_FILE="/tmp/dostup_bot_info.txt"
+echo "Started at: $(date)" > "$BOT_INFO_FILE"
+echo "PID: $$" >> "$BOT_INFO_FILE"
+echo "Hostname: $(hostname)" >> "$BOT_INFO_FILE"
+
+# Wait to ensure all processes have been terminated
+sleep 3
 
 # Check if we're running in Docker
 if [ -f "/.dockerenv" ]; then
   echo "Running in Docker container"
 fi
 
-# Set up trap to remove lock file when script exits
-trap 'rm -f $LOCK_FILE; echo "Removed lock file on exit."' EXIT INT TERM
+# Set up trap to remove lock files when script exits
+trap 'rm -f $MAIN_LOCK_FILE $RENDER_LOCK_FILE $SYSTEM_LOCK_FILE $BOT_INFO_FILE; echo "Removed all lock files on exit."' EXIT INT TERM HUP
+
+# Pass a unique startup ID to the bot to track instances
+STARTUP_ID=$(date +%s%N)
+export BOT_STARTUP_ID=$STARTUP_ID
+echo "Bot startup ID: $STARTUP_ID" >> "$BOT_INFO_FILE"
 
 # Execute the start script - Explicitly use ONLY this command to start the bot
-echo "Starting the bot via start.py..."
+echo "Starting the bot via start.py with startup ID $STARTUP_ID..."
 cd /app
 exec python start.py
