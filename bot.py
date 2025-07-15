@@ -563,7 +563,12 @@ async def send_course_access(user_id: int):
 @dp.message_handler(commands=["start"])
 @dp.message_handler(lambda m: m.text.lower() == "старт")
 async def cmd_start(message: types.Message, state: FSMContext):
-    logger.debug(f"Команда start от {message.from_user.id}")
+    user = message.from_user
+    user_id = user.id
+    username = user.username or "Нет username"
+    full_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or "Имя не указано"
+    
+    logger.debug(f"Команда start от {user_id}")
     text = (
         f"👋 Добро пожаловать в бот курса '{COURSE_TITLE}'!\n\n"
         "🎬 Получи бесплатный ознакомительный урок — просто нажми соответствующую кнопку.\n\n"
@@ -573,12 +578,28 @@ async def cmd_start(message: types.Message, state: FSMContext):
     )
     await message.answer(text, reply_markup=main_menu)
     await state.finish()
+    
+    # Уведомляем администратора о новом пользователе
+    try:
+        admin_notification = (
+            f"🆕 Новый пользователь в боте!\n\n"
+            f"👤 ID: {user_id}\n"
+            f"👤 Username: @{username}\n"
+            f"👤 Имя: {full_name}"
+        )
+        await bot.send_message(chat_id=ADMIN_USER_ID, text=admin_notification)
+        logger.info(f"Администратор уведомлен о новом пользователе {user_id}")
+    except Exception as e:
+        logger.error(f"Ошибка при отправке уведомления администратору: {e}")
 
 # ─────────[ Безкоштовний урок ]──────────────────────────
 @dp.message_handler(lambda m: m.text.lower() == "🎬 получить бесплатный урок")
 async def send_free_lesson(message: types.Message):
     user = message.from_user
     user_id = user.id
+    username = user.username or "Нет username"
+    full_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or "Имя не указано"
+    
     logger.debug(f"Запрос бесплатного урока от {user_id}")
     
     # Отправляем урок
@@ -596,6 +617,19 @@ async def send_free_lesson(message: types.Message):
             last_name=user.last_name
         )
         logger.debug(f"Просмотр урока записан в систему напоминаний для пользователя {user_id}")
+    
+    # Уведомляем администратора о просмотре бесплатного урока
+    try:
+        admin_notification = (
+            f"👁️ Просмотр бесплатного урока!\n\n"
+            f"👤 ID: {user_id}\n"
+            f"👤 Username: @{username}\n"
+            f"👤 Имя: {full_name}"
+        )
+        await bot.send_message(chat_id=ADMIN_USER_ID, text=admin_notification)
+        logger.info(f"Администратор уведомлен о просмотре бесплатного урока пользователем {user_id}")
+    except Exception as e:
+        logger.error(f"Ошибка при отправке уведомления администратору: {e}")
 
 # ─────────[ Меню покупки ]───────────────────────────────
 @dp.message_handler(lambda m: m.text.lower() == "💳 оплатить 149€")
@@ -1079,22 +1113,85 @@ async def show_agb(message: types.Message):
     await message.answer(doc_text, reply_markup=main_menu)
 
 async def on_startup(dp):
-    logger.info("Бот запущен!")
+    import os
+    import socket
+    
+    # Дополнительное логирование для отладки
+    startup_id = os.environ.get('BOT_STARTUP_ID', 'НЕИЗВЕСТНО')
+    hostname = socket.gethostname()
+    pid = os.getpid()
+    
+    logger.info(f"=== БОТ ЗАПУЩЕН [PID:{pid}] [ID:{startup_id}] [HOST:{hostname}] ===")
+    
+    # Записываем информацию о запуске в файл для мониторинга
+    try:
+        with open("/tmp/dostup_bot_running.txt", "w") as f:
+            f.write(f"PID: {pid}\n")
+            f.write(f"Startup ID: {startup_id}\n")
+            f.write(f"Hostname: {hostname}\n")
+            f.write(f"Started at: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+    except Exception as e:
+        logger.error(f"Ошибка при записи информации о запуске: {e}")
     
     # Запускаем систему напоминаний
     if reminder_system:
-        await reminder_system.start()
-        logger.info("Система напоминаний запущена")
+        try:
+            await reminder_system.start()
+            logger.info("Система напоминаний запущена")
+        except Exception as e:
+            logger.error(f"Ошибка при запуске системы напоминаний: {e}")
 
 async def on_shutdown(dp):
-    logger.info("Бот останавливается...")
+    import os
+    import signal
+    
+    pid = os.getpid()
+    logger.info(f"=== БОТ ОСТАНАВЛИВАЕТСЯ [PID:{pid}] ===")
+    
+    # Удаляем информационный файл
+    try:
+        if os.path.exists("/tmp/dostup_bot_running.txt"):
+            os.remove("/tmp/dostup_bot_running.txt")
+    except Exception as e:
+        logger.error(f"Ошибка при удалении информационного файла: {e}")
+    
+    # Удаляем файлы блокировок для чистоты
+    lock_files = [
+        "/tmp/dostup_bot_instance.lock",
+        "/tmp/dostup_bot_render_lock.lock",
+        "/var/tmp/dostup_bot.lock",
+        "/tmp/dostup_bot_var_lock.lock"
+    ]
+    
+    for lock_path in lock_files:
+        try:
+            if os.path.exists(lock_path):
+                os.remove(lock_path)
+                logger.info(f"Файл блокировки {lock_path} удален при остановке")
+        except Exception as e:
+            logger.error(f"Ошибка при удалении файла блокировки {lock_path}: {e}")
     
     # Останавливаем систему напоминаний
     if reminder_system:
-        await reminder_system.stop()
-        logger.info("Система напоминаний остановлена")
+        try:
+            await reminder_system.stop()
+            logger.info("Система напоминаний остановлена")
+        except Exception as e:
+            logger.error(f"Ошибка при остановке системы напоминаний: {e}")
     
-    logger.info("Бот остановлен!")
+    logger.info("=== БОТ ОСТАНОВЛЕН ===")
+    
+    # Для гарантированной остановки, принудительно завершаем процесс после всех операций
+    try:
+        def force_exit():
+            logger.info("Принудительное завершение процесса через 3 секунды")
+            time.sleep(3)
+            os.kill(pid, signal.SIGTERM)
+        
+        import threading
+        threading.Thread(target=force_exit).start()
+    except:
+        pass
 
 # Функция, которая запускается при запуске бота
 async def main():
@@ -1119,15 +1216,114 @@ async def main():
 
 # Функция для запуска бота из внешнего скрипта (для Render)
 def start_polling():
+    import os
+    import sys
+    import fcntl
+    import signal
+    import time
+    import socket
     from aiogram import executor
-    logger.info("Запуск бота через функцию start_polling()")
-    executor.start_polling(
-        dp, 
-        on_startup=on_startup, 
-        on_shutdown=on_shutdown, 
-        skip_updates=True,
-        allowed_updates=["message", "callback_query", "pre_checkout_query", "chat_join_request"]
-    )
+    
+    # Создаем множественные файлы блокировки для большей надежности
+    LOCK_FILES = [
+        "/tmp/dostup_bot_instance.lock",
+        "/tmp/dostup_bot_render_lock.lock",
+        "/var/tmp/dostup_bot.lock" if os.path.exists("/var/tmp") else "/tmp/dostup_bot_var_lock.lock"
+    ]
+    
+    # Получаем информацию о запуске для логов
+    startup_id = os.environ.get('BOT_STARTUP_ID', str(int(time.time())))
+    hostname = socket.gethostname()
+    pid = os.getpid()
+    
+    logger.info(f"=== ИНИЦИАЛИЗАЦИЯ БОТА [PID:{pid}] [ID:{startup_id}] [HOST:{hostname}] ===")
+    
+    # Функция для завершения всех других процессов бота
+    def kill_other_bot_processes():
+        logger.warning("Активное завершение других процессов бота")
+        try:
+            import subprocess
+            # Получаем список всех процессов Python, связанных с ботом
+            ps_output = subprocess.check_output(
+                "ps aux | grep -E 'python.*(bot\\.py|start\\.py)' | grep -v grep", 
+                shell=True
+            ).decode('utf-8')
+            
+            # Парсим вывод и получаем PID'ы
+            for line in ps_output.strip().split('\n'):
+                if line:
+                    parts = line.split()
+                    if len(parts) > 1:
+                        other_pid = int(parts[1])
+                        # Не убиваем текущий процесс
+                        if other_pid != pid:
+                            logger.warning(f"Завершаем другой процесс бота с PID {other_pid}")
+                            try:
+                                os.kill(other_pid, signal.SIGKILL)
+                                logger.info(f"Процесс {other_pid} успешно завершен")
+                            except Exception as e:
+                                logger.error(f"Ошибка при завершении процесса {other_pid}: {e}")
+        except Exception as e:
+            logger.error(f"Ошибка при поиске других процессов: {e}")
+    
+    # Проверяем и устраняем другие экземпляры бота
+    kill_other_bot_processes()
+    
+    # Обрабатываем файловые блокировки
+    locks = []
+    try:
+        for lock_path in LOCK_FILES:
+            try:
+                # Убираем старый файл блокировки, если есть
+                if os.path.exists(lock_path):
+                    try:
+                        with open(lock_path, 'r') as f:
+                            old_pid = f.read().strip()
+                            logger.warning(f"Найден старый файл блокировки {lock_path} с PID {old_pid}")
+                    except:
+                        pass
+                    try:
+                        os.remove(lock_path)
+                        logger.info(f"Старый файл блокировки {lock_path} удален")
+                    except Exception as e:
+                        logger.error(f"Не удалось удалить старый файл блокировки {lock_path}: {e}")
+                
+                # Создаем новый файл блокировки
+                lock_file = open(lock_path, "w")
+                lock_file.write(f"{pid}\n{startup_id}\n{hostname}\n{time.time()}")
+                lock_file.flush()
+                
+                # Получаем блокировку
+                fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                locks.append(lock_file)  # Сохраняем ссылку на файл, чтобы он не закрылся GC
+                logger.info(f"Успешно получена блокировка для {lock_path}")
+            except IOError:
+                logger.error(f"Не удалось получить блокировку для {lock_path} - возможно другой экземпляр запущен")
+            except Exception as e:
+                logger.error(f"Ошибка при работе с файлом блокировки {lock_path}: {e}")
+        
+        # Даже если не получилось получить все блокировки, продолжаем работу
+        # после завершения других процессов
+        logger.info(f"Запуск бота через функцию start_polling() [PID:{pid}] [ID:{startup_id}]")
+        executor.start_polling(
+            dp, 
+            on_startup=on_startup, 
+            on_shutdown=on_shutdown, 
+            skip_updates=True,
+            allowed_updates=["message", "callback_query", "pre_checkout_query", "chat_join_request"]
+        )
+    except Exception as e:
+        logger.critical(f"Критическая ошибка при запуске бота: {e}")
+        # Удаляем все созданные файлы блокировки
+        for lock_file in locks:
+            try:
+                lock_path = lock_file.name
+                lock_file.close()
+                os.remove(lock_path)
+                logger.info(f"Файл блокировки {lock_path} удален при ошибке")
+            except:
+                pass
+        sys.exit(1)
 
 # Запуск бота при прямом запуске файла
 if __name__ == "__main__":
