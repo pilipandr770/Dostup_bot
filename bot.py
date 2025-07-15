@@ -563,7 +563,12 @@ async def send_course_access(user_id: int):
 @dp.message_handler(commands=["start"])
 @dp.message_handler(lambda m: m.text.lower() == "старт")
 async def cmd_start(message: types.Message, state: FSMContext):
-    logger.debug(f"Команда start от {message.from_user.id}")
+    user = message.from_user
+    user_id = user.id
+    username = user.username or "Нет username"
+    full_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or "Имя не указано"
+    
+    logger.debug(f"Команда start от {user_id}")
     text = (
         f"👋 Добро пожаловать в бот курса '{COURSE_TITLE}'!\n\n"
         "🎬 Получи бесплатный ознакомительный урок — просто нажми соответствующую кнопку.\n\n"
@@ -573,12 +578,28 @@ async def cmd_start(message: types.Message, state: FSMContext):
     )
     await message.answer(text, reply_markup=main_menu)
     await state.finish()
+    
+    # Уведомляем администратора о новом пользователе
+    try:
+        admin_notification = (
+            f"🆕 Новый пользователь в боте!\n\n"
+            f"👤 ID: {user_id}\n"
+            f"👤 Username: @{username}\n"
+            f"👤 Имя: {full_name}"
+        )
+        await bot.send_message(chat_id=ADMIN_USER_ID, text=admin_notification)
+        logger.info(f"Администратор уведомлен о новом пользователе {user_id}")
+    except Exception as e:
+        logger.error(f"Ошибка при отправке уведомления администратору: {e}")
 
 # ─────────[ Безкоштовний урок ]──────────────────────────
 @dp.message_handler(lambda m: m.text.lower() == "🎬 получить бесплатный урок")
 async def send_free_lesson(message: types.Message):
     user = message.from_user
     user_id = user.id
+    username = user.username or "Нет username"
+    full_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or "Имя не указано"
+    
     logger.debug(f"Запрос бесплатного урока от {user_id}")
     
     # Отправляем урок
@@ -596,6 +617,19 @@ async def send_free_lesson(message: types.Message):
             last_name=user.last_name
         )
         logger.debug(f"Просмотр урока записан в систему напоминаний для пользователя {user_id}")
+    
+    # Уведомляем администратора о просмотре бесплатного урока
+    try:
+        admin_notification = (
+            f"👁️ Просмотр бесплатного урока!\n\n"
+            f"👤 ID: {user_id}\n"
+            f"👤 Username: @{username}\n"
+            f"👤 Имя: {full_name}"
+        )
+        await bot.send_message(chat_id=ADMIN_USER_ID, text=admin_notification)
+        logger.info(f"Администратор уведомлен о просмотре бесплатного урока пользователем {user_id}")
+    except Exception as e:
+        logger.error(f"Ошибка при отправке уведомления администратору: {e}")
 
 # ─────────[ Меню покупки ]───────────────────────────────
 @dp.message_handler(lambda m: m.text.lower() == "💳 оплатить 149€")
@@ -1119,15 +1153,46 @@ async def main():
 
 # Функция для запуска бота из внешнего скрипта (для Render)
 def start_polling():
+    import os
+    import sys
+    import fcntl
     from aiogram import executor
-    logger.info("Запуск бота через функцию start_polling()")
-    executor.start_polling(
-        dp, 
-        on_startup=on_startup, 
-        on_shutdown=on_shutdown, 
-        skip_updates=True,
-        allowed_updates=["message", "callback_query", "pre_checkout_query", "chat_join_request"]
-    )
+    
+    # Создаем файловый блокировщик для предотвращения параллельных запусков
+    lock_file_path = "/tmp/dostup_bot_instance.lock"
+    
+    try:
+        # Открываем файл блокировки
+        lock_file = open(lock_file_path, "w")
+        
+        # Пробуем получить эксклюзивную блокировку, не блокируя выполнение (LOCK_EX | LOCK_NB)
+        try:
+            fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            logger.info("Успешно получена блокировка файла - это первый экземпляр бота")
+        except IOError:
+            logger.error("Не удалось получить блокировку файла - другой экземпляр бота уже запущен")
+            logger.error("Завершаем этот экземпляр для предотвращения конфликтов")
+            sys.exit(1)
+        
+        logger.info("Запуск бота через функцию start_polling()")
+        executor.start_polling(
+            dp, 
+            on_startup=on_startup, 
+            on_shutdown=on_shutdown, 
+            skip_updates=True,
+            allowed_updates=["message", "callback_query", "pre_checkout_query", "chat_join_request"]
+        )
+    except Exception as e:
+        logger.error(f"Ошибка при работе с файлом блокировки: {e}")
+        # Продолжаем запуск в случае ошибки с блокировщиком
+        logger.info("Запуск бота без блокировки")
+        executor.start_polling(
+            dp, 
+            on_startup=on_startup, 
+            on_shutdown=on_shutdown, 
+            skip_updates=True,
+            allowed_updates=["message", "callback_query", "pre_checkout_query", "chat_join_request"]
+        )
 
 # Запуск бота при прямом запуске файла
 if __name__ == "__main__":
