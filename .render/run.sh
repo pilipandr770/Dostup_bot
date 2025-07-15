@@ -11,10 +11,22 @@ RENDER_LOCK_FILE="/tmp/dostup_bot_render.lock"
 SYSTEM_LOCK_FILE="/var/tmp/dostup_bot.lock"
 BOT_ALREADY_RUNNING=false
 
+# Проверяем наличие Redis URL для распределенной блокировки
+if [ -n "$REDIS_URL" ]; then
+    echo "Redis URL настроен: $REDIS_URL"
+    echo "Будет использована распределенная блокировка через Redis"
+else
+    echo "Redis URL не настроен, используем файловую блокировку"
+fi
+
 # Function to terminate ALL existing bot processes (extra aggressive)
 kill_all_bot_processes() {
     echo "Terminating ALL existing bot processes..."
-    # Find all python processes related to the bot
+    
+    # Try multiple methods to find bot processes
+    
+    # Method 1: Using ps with grep (standard)
+    echo "Method 1: Using ps with grep..."
     BOT_PIDS=$(ps aux | grep -E "python.*(bot\.py|start\.py)" | grep -v grep | awk '{print $2}')
     
     if [ -n "$BOT_PIDS" ]; then
@@ -24,11 +36,57 @@ kill_all_bot_processes() {
             kill -9 $PID 2>/dev/null || echo "Failed to kill $PID"
         done
     else
-        echo "No bot processes found to kill"
+        echo "No bot processes found with method 1"
+    fi
+    
+    # Method 2: Using pgrep (more focused)
+    echo "Method 2: Using pgrep..."
+    if command -v pgrep &> /dev/null; then
+        PGREP_PIDS=$(pgrep -f "python.*(bot\.py|start\.py)")
+        if [ -n "$PGREP_PIDS" ]; then
+            echo "Found bot processes with pgrep: $PGREP_PIDS"
+            for PID in $PGREP_PIDS; do
+                echo "Killing process $PID"
+                kill -9 $PID 2>/dev/null || echo "Failed to kill $PID"
+            done
+        else
+            echo "No bot processes found with method 2"
+        fi
+    else
+        echo "pgrep command not available"
+    fi
+    
+    # Method 3: Check for Python processes using TCP ports 
+    echo "Method 3: Checking for processes using typical bot ports..."
+    if command -v lsof &> /dev/null; then
+        for PORT in 8443 3000 8080; do
+            PORT_PIDS=$(lsof -i :$PORT -t 2>/dev/null)
+            if [ -n "$PORT_PIDS" ]; then
+                echo "Found processes using port $PORT: $PORT_PIDS"
+                for PID in $PORT_PIDS; do
+                    echo "Killing process $PID using port $PORT"
+                    kill -9 $PID 2>/dev/null || echo "Failed to kill $PID"
+                done
+            fi
+        done
+    else
+        echo "lsof command not available"
+    fi
+    
+    # Method 4: Check for processes that might be Telegram bots
+    echo "Method 4: Checking for possible Telegram bot processes..."
+    TELEGRAM_PIDS=$(ps aux | grep -E "python.*aiogram|telegram|bot" | grep -v grep | awk '{print $2}')
+    if [ -n "$TELEGRAM_PIDS" ]; then
+        echo "Found possible Telegram processes: $TELEGRAM_PIDS"
+        for PID in $TELEGRAM_PIDS; do
+            echo "Killing possible Telegram process $PID"
+            kill -9 $PID 2>/dev/null || echo "Failed to kill $PID"
+        done
     fi
     
     # Wait to ensure processes are terminated
-    sleep 2
+    echo "Waiting for processes to terminate..."
+    sleep 3
 }
 
 # Check for any existing lock files and running processes

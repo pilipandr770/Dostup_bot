@@ -12,6 +12,7 @@ ENV PYTHONPATH=/app:/usr/local/lib/python3.11/site-packages:/usr/local/lib/pytho
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
     build-essential gcc \
+    procps iproute2 psmisc lsof fuser htop \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements file
@@ -22,6 +23,9 @@ RUN pip install wheel && \
     pip install --only-binary :all: aiohttp==3.8.5 && \
     pip install --no-cache-dir aiogram==2.25.1 && \
     pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir filelock && \
+    pip install --no-cache-dir psutil && \
+    pip install --no-cache-dir redis && \
     python -c "import sys; print(f'Python version: {sys.version}')" && \
     python -c "import aiohttp; print(f'aiohttp version: {aiohttp.__version__}')" && \
     echo "DOCKER_CONTAINER=true" >> /etc/environment
