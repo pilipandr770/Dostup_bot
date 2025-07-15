@@ -1,0 +1,33 @@
+services:
+  # Фоновый сервис для Telegram бота - переключение на Docker
+  - type: web
+    name: dostup-bot
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    autoDeploy: true
+    startCommand: chmod +x .render/run.sh && ./.render/run.sh
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: COURSE_CHANNEL_ID
+        sync: false
+      - key: YOUTUBE_CHANNEL_URL
+        sync: false
+      - key: CHANNEL_INVITE_LINK
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_ASSISTANT_ID
+        sync: false
+      - key: STRIPE_PAYMENT_URL
+        sync: false
+      - key: ADMIN_USER_ID
+        sync: false
+      - key: STRIPE_API_KEY
+        sync: false
+    # Дополнительные настройки
+    disk:
+      name: bot-data
+      mountPath: /app
+      sizeGB: 1

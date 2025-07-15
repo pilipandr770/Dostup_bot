@@ -1,0 +1,35 @@
+# Diagnostic Dockerfile for debugging import issues
+FROM python:3.11-slim-bookworm
+
+# Set working directory
+WORKDIR /app
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app:/usr/local/lib/python3.11/site-packages:/usr/local/lib/python3.11/site-packages/app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy only what's needed for diagnosis
+COPY debug_imports.py /app/
+COPY debug_cloud_run.py /app/
+COPY app/reminder_system.py /app/reminder_system.py
+
+# Copy reminder_system to all possible import locations
+RUN mkdir -p /usr/local/lib/python3.11/site-packages/app
+COPY app/reminder_system.py /usr/local/lib/python3.11/site-packages/app/
+COPY app/reminder_system.py /usr/local/lib/python3.11/site-packages/
+
+# Install minimal requirements
+RUN pip install wheel && \
+    pip install aiohttp==3.8.5
+
+# Expose port 8080 for Cloud Run health checks
+EXPOSE 8080
+
+# Command to run the diagnostic HTTP server
+CMD ["python", "debug_cloud_run.py"]

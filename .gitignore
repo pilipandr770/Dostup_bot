@@ -1,0 +1,96 @@
+# Environment variables
+.env
+app/.env
+*.env
+.env.*
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.python-version
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+.ENV/
+app/venv/
+
+# Video files (if any)
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
+*.mp3
+*.wav
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-*
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Temporary files
+*.tmp
+*.temp
+*~
+
+# Archive files
+*.zip
+*.rar
+*.7z
+*.tar.gz
+
+# Backup files
+*.bak
+*.backup
+*.old
+
+# Sensitive files
+*.key
+*.pem
+*.crt
+*.cert
+keys/
+secrets/
+
+# Test files
+.coverage
+.pytest_cache/
+.tox/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Node.js (if used)
+node_modules/
+package-lock.json
+yarn.lock

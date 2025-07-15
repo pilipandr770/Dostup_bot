@@ -1,0 +1,35 @@
+# Docker Compose for Telegram Bot
+services:
+  telegram-bot:
+    build: .
+    container_name: dostup_bot
+    restart: unless-stopped
+    env_file:
+      - ./.env
+    volumes:
+      - ./app:/app
+      - ./app/bot_debug.log:/app/bot_debug.log
+      - ./app/reminder_data.db:/app/reminder_data.db
+    networks:
+      - bot-network
+    environment:
+      - PORT=8080
+      - PYTHONPATH=/app:/usr/local/lib/python3.11/site-packages:/usr/local/lib/python3.11/site-packages/app
+      # Make sure to add your actual values in .env file or here
+      # - BOT_TOKEN=your_actual_token
+      # - ADMIN_USER_ID=your_actual_admin_id
+      # - COURSE_CHANNEL_ID=your_actual_channel_id
+  
+  # Debug container to check imports
+  check-imports:
+    build: .
+    container_name: dostup_bot_check_imports
+    command: python /app/check_imports.py
+    volumes:
+      - ./app:/app
+    environment:
+      - PYTHONPATH=/app:/usr/local/lib/python3.11/site-packages:/usr/local/lib/python3.11/site-packages/app
+
+networks:
+  bot-network:
+    driver: bridge
